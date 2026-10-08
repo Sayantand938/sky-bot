@@ -1,0 +1,26 @@
+node_modules/
+.next/
+out/
+build/
+.vercel/
+*.tsbuildinfo
+next-env.d.ts
+
+# Secrets — never commit these
+.env
+.env*.local
+
+# Contains the live bot token. Keep it local only.
+BOT DETAILS.md
+
+# Local ACL recovery artifacts
+.acl-recovery/
+
+# Local pnpm content store (created by some pnpm configurations)
+.pnpm-store/
+
+# Local run logs
+.server.log
+
+.DS_Store
+*.log

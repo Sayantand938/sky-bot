@@ -1,0 +1,32 @@
+{
+  "name": "sky-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sky Bot — a conversational Telegram bot powered by AICredits (DeepSeek V4.1 Flash), deployable on Vercel.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test:ai": "node scripts/test-ai.mjs",
+    "test:webhook": "node scripts/test-webhook.mjs",
+    "test:memory": "node scripts/test-memory.mjs"
+  },
+  "pnpm": {
+    "nodeLinker": "hoisted"
+  },
+  "dependencies": {
+    "next": "14.2.15",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.10",
+    "@types/react": "18.3.3",
+    "@types/react-dom": "18.3.0",
+    "typescript": "5.5.4"
+  },
+  "engines": {
+    "node": ">=18.17.0"
+  }
+}
