@@ -305,3 +305,12 @@ vercel env ls production | grep AI_SYSTEM_PROMPT
 - Secrets live only in environment variables and are never logged or returned.
 - Anyone who finds your bot on Telegram can use your credits. There is no
   allow-list in this project — add one in `handleMessage` if you need it.
+
+---
+
+## Further reading
+
+| Document | What it covers |
+| --- | --- |
+| [docs/OPERATIONS.md](docs/OPERATIONS.md) | Day-to-day running: health checks, redeploying, rotating secrets, tuning her behaviour, troubleshooting. |
+| [docs/API DOCUMENTATION.md](docs/API%20DOCUMENTATION.md) | The AICredits API reference and model name. |

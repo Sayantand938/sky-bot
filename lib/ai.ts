@@ -11,7 +11,7 @@ import type { ChatMessage } from './memory';
 /**
  * Thin client for the AICredits chat-completions API.
  * The endpoint is OpenAI-compatible, so the request/response shape below is
- * the standard one. Docs: see API DOCUMENTATION.md.
+ * the standard one. Docs: see docs/API DOCUMENTATION.md.
  */
 
 type ApiRole = 'system' | 'user' | 'assistant';

@@ -11,6 +11,8 @@ next-env.d.ts
 .env*.local
 
 # Contains the live bot token. Keep it local only.
+# Matched at any depth so moving it into docs/ cannot leak the token.
+**/BOT DETAILS.md
 BOT DETAILS.md
 
 # Local ACL recovery artifacts

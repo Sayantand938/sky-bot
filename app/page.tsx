@@ -33,7 +33,7 @@ export default function Home() {
       </ol>
 
       <p style={{ color: '#6b7280', fontSize: 13, marginTop: 40 }}>
-        See README.md for the full walkthrough.
+        See README.md for the walkthrough, and docs/OPERATIONS.md for running it.
       </p>
     </main>
   );
