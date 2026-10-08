@@ -24,3 +24,6 @@ BOT DETAILS.md
 
 .DS_Store
 *.log
+
+.vercel
+.env*
