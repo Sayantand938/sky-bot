@@ -1,8 +1,10 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { AiError, generateReply } from '@/lib/ai';
-import { webhookSecret } from '@/lib/config';
+import { botName, webhookSecret } from '@/lib/config';
 import { appendTurn, clearHistory, getHistory, memoryStats } from '@/lib/memory';
+import { bubbleDelayMs, splitIntoBubbles } from '@/lib/persona';
 import {
+  sendBubbles,
   sendMessage,
   sendTyping,
   type TelegramMessage,
@@ -23,15 +25,16 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
-const HELP_TEXT = [
-  'Hi! I am an AI chatbot. Just send me a message and I will reply.',
-  '',
-  'Commands:',
-  '/start - say hello',
-  '/help - show this help',
-  '/reset - forget our conversation',
-  '/whoami - show your Telegram chat ID',
-].join('\n');
+function helpText(): string {
+  return [
+    `I'm ${botName()} — just text me like you'd text a friend.`,
+    '',
+    'A few commands if you need them:',
+    '/reset - forget our conversation and start fresh',
+    '/whoami - show your Telegram chat ID',
+    '/help - this message',
+  ].join('\n');
+}
 
 /** Constant-time-ish comparison so the secret cannot be probed by timing. */
 function safeEqual(a: string, b: string): boolean {
@@ -56,24 +59,29 @@ async function handleCommand(
 ): Promise<boolean> {
   const chatId = message.chat.id;
 
+  const name = message.from?.first_name;
+
   if (isCommand(text, '/start')) {
-    await sendMessage(
+    // Two short bubbles, the way a friend would actually greet you.
+    await sendBubbles(
       chatId,
-      `Hello${message.from?.first_name ? ` ${message.from.first_name}` : ''}! ` +
-        'I am an AI assistant. Ask me anything and I will reply.\n\n' +
-        'Use /help to see the available commands.',
+      [
+        name ? `Hey ${name}! 👋` : 'Hey! 👋',
+        `I'm ${botName()}. Just talk to me like a friend — no commands needed.`,
+      ],
+      { delayMs: () => 700 },
     );
     return true;
   }
 
   if (isCommand(text, '/help')) {
-    await sendMessage(chatId, HELP_TEXT);
+    await sendMessage(chatId, helpText());
     return true;
   }
 
   if (isCommand(text, '/reset')) {
     clearHistory(chatId);
-    await sendMessage(chatId, 'Done - I have forgotten our conversation. What is next?');
+    await sendMessage(chatId, "Okay, clean slate — what's on your mind?");
     return true;
   }
 
@@ -92,7 +100,7 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
   if (text === '') {
     // Stickers, photos without captions, voice notes, joins, etc.
     if (message.chat.type === 'private') {
-      await sendMessage(chatId, 'I can only read text messages for now.');
+      await sendMessage(chatId, "I can't see that one — text me instead?");
     }
     return;
   }
@@ -115,8 +123,23 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
 
   try {
     const reply = await generateReply(history);
+
+    // Store the full reply as one turn, so context stays coherent even though
+    // the user sees it as several bubbles.
     appendTurn(chatId, text, reply);
-    await sendMessage(chatId, reply, { replyToMessageId: message.message_id });
+
+    // Send it the way a person texts: separate short messages, paced out.
+    const bubbles = splitIntoBubbles(reply);
+    if (bubbles.length === 0) {
+      await sendMessage(chatId, "Hmm, I lost my train of thought — say that again?", {
+        replyToMessageId: message.message_id,
+      });
+    } else {
+      await sendBubbles(chatId, bubbles, {
+        replyToMessageId: message.message_id,
+        delayMs: bubbleDelayMs,
+      });
+    }
   } catch (error) {
     const isAiError = error instanceof AiError;
     if (!isAiError) {

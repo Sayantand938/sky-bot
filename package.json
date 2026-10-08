@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test:ai": "node scripts/test-ai.mjs",
     "test:webhook": "node scripts/test-webhook.mjs",
-    "test:memory": "node scripts/test-memory.mjs"
+    "test:memory": "node scripts/test-memory.mjs",
+    "test:bubbles": "node scripts/test-bubbles.mjs"
   },
   "pnpm": {
     "nodeLinker": "hoisted"

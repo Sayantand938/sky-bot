@@ -95,42 +95,33 @@ async function callTelegram<T>(
   return data.result as T;
 }
 
-/** Splits text so it never exceeds Telegram's per-message character limit. */
-function chunkText(text: string, size = TELEGRAM_MAX_LENGTH): string[] {
-  if (text.length <= size) return [text];
-
-  const chunks: string[] = [];
-  let remaining = text;
-
-  while (remaining.length > size) {
-    // Prefer to break on a paragraph, then a line, then a space.
-    const window = remaining.slice(0, size);
-    const breakAt = Math.max(
-      window.lastIndexOf('\n\n'),
-      window.lastIndexOf('\n'),
-      window.lastIndexOf(' '),
-    );
-    const cut = breakAt > size * 0.5 ? breakAt : size;
-    chunks.push(remaining.slice(0, cut).trimEnd());
-    remaining = remaining.slice(cut).trimStart();
-  }
-
-  if (remaining.length > 0) chunks.push(remaining);
-  return chunks;
+/** Counts UTF-16 units the way Telegram does, for the hard cap. */
+function fitsTelegram(text: string): boolean {
+  return text.length <= TELEGRAM_MAX_LENGTH;
 }
 
 /**
- * Sends a message, splitting long replies into several Telegram messages.
- * Returns the number of messages sent.
+ * Sends a plain message, hard-splitting only if it exceeds Telegram's limit.
+ * Prefer `sendBubbles` for model replies — this is for fixed system text.
  */
 export async function sendMessage(
   chatId: number,
   text: string,
   options: { replyToMessageId?: number } = {},
 ): Promise<number> {
-  const chunks = chunkText(text);
-  let sent = 0;
+  // Hard-split as a safety net only; persona splitting happens upstream.
+  const chunks: string[] = [];
+  let remaining = text;
+  while (!fitsTelegram(remaining)) {
+    const window = remaining.slice(0, TELEGRAM_MAX_LENGTH);
+    const at = Math.max(window.lastIndexOf('\n\n'), window.lastIndexOf('\n'), window.lastIndexOf(' '));
+    const cut = at > TELEGRAM_MAX_LENGTH * 0.5 ? at : TELEGRAM_MAX_LENGTH;
+    chunks.push(remaining.slice(0, cut).trimEnd());
+    remaining = remaining.slice(cut).trimStart();
+  }
+  if (remaining) chunks.push(remaining);
 
+  let sent = 0;
   for (const [index, chunk] of chunks.entries()) {
     await callTelegram('sendMessage', {
       chat_id: chatId,
@@ -142,6 +133,61 @@ export async function sendMessage(
       link_preview_options: { is_disabled: true },
     });
     sent += 1;
+  }
+
+  return sent;
+}
+
+/**
+ * Sends a model reply as a sequence of chat bubbles, the way a person texts:
+ * each bubble arrives on its own, after a short pause, with the "typing…"
+ * indicator showing in between.
+ *
+ * Only the first bubble quotes the user's message; the rest follow naturally.
+ * Returns the number of bubbles actually sent.
+ */
+export async function sendBubbles(
+  chatId: number,
+  bubbles: string[],
+  options: {
+    replyToMessageId?: number;
+    /** Called before each bubble, to pace the send. */
+    delayMs?: (bubble: string, index: number) => number;
+    /** Awaits a real pause. Injectable so tests don't sleep. */
+    sleep?: (ms: number) => Promise<void>;
+  } = {},
+): Promise<number> {
+  const realSleep = (ms: number) =>
+    new Promise<void>((resolve) => setTimeout(resolve, ms));
+  const sleep = options.sleep ?? realSleep;
+
+  let sent = 0;
+
+  for (const [index, bubble] of bubbles.entries()) {
+    const isFirst = index === 0;
+
+    if (!isFirst && options.delayMs) {
+      // Show "typing…" during the pause so the gap reads as composing.
+      await sendTyping(chatId);
+      await sleep(Math.max(0, options.delayMs(bubble, index)));
+    }
+
+    try {
+      await callTelegram('sendMessage', {
+        chat_id: chatId,
+        text: bubble,
+        ...(isFirst && options.replyToMessageId
+          ? { reply_to_message_id: options.replyToMessageId }
+          : {}),
+        link_preview_options: { is_disabled: true },
+      });
+      sent += 1;
+    } catch (error) {
+      // If one bubble fails, stop rather than sending the rest out of order.
+      console.error(`[telegram] bubble ${index + 1}/${bubbles.length} failed:`, error);
+      if (isFirst) throw error;
+      break;
+    }
   }
 
   return sent;

@@ -1,0 +1,207 @@
+/**
+ * Turns one model reply into the sequence of separate Telegram messages a
+ * person would actually send.
+ *
+ * The model is told to separate its thoughts with a blank line, but we never
+ * trust that blindly — replies arrive that are one long paragraph, or that use
+ * blank lines for ordinary paragraphing. So this module decides the final
+ * bubbles, using several signals:
+ *
+ *   1. Blank lines the model wrote  -> the primary, intended split.
+ *   2. A long single block          -> split on sentence boundaries.
+ *   3. Anything above Telegram's cap -> split on words as a last resort.
+ *
+ * Every bubble is also trimmed of markdown, because Telegram renders the plain
+ * text we send and stray `**` or `- ` bullets look like typos in a chat.
+ */
+
+/** Telegram's hard limit per message. */
+const TELEGRAM_HARD_LIMIT = 4096;
+
+/**
+ * Above this, a bubble feels like an essay rather than a text message.
+ * Deliberately tight: real people send short texts. A 250-character paragraph
+ * on a phone is already four lines — longer than most people type in one go.
+ */
+const PREFERRED_MAX = 220;
+
+/** Don't split into slivers; merge anything shorter than this into a neighbour. */
+const MIN_BUBBLE = 12;
+
+/** Upper bound on bubbles, so a rambling reply can't spam the chat. */
+const MAX_BUBBLES = 4;
+
+/**
+ * Strips markdown that would show up as literal punctuation in Telegram.
+ * Deliberately conservative: we only remove formatting that is unambiguous.
+ */
+function stripMarkdown(text: string): string {
+  return (
+    text
+      // **bold** / __bold__
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/__([^_]+)__/g, '$1')
+      // *italic* / _italic_ (single, and not mid-word underscores)
+      .replace(/(^|\s)\*([^*\n]+)\*/g, '$1$2')
+      .replace(/(^|\s)_([^_\n]+)_(?=\s|$)/g, '$1$2')
+      // `code`
+      .replace(/`([^`]+)`/g, '$1')
+      // Leading bullet markers on their own lines -> plain sentences
+      .replace(/^\s*[-*•]\s+/gm, '')
+      .replace(/^\s*#{1,6}\s+/gm, '')
+      // Collapse 3+ newlines to a blank line
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+  );
+}
+
+/** Splits a block into sentences, keeping terminal punctuation. */
+function splitSentences(block: string): string[] {
+  const parts = block
+    .split(/(?<=[.!?…])\s+(?=[A-Z0-9"'(])/g)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return parts.length > 0 ? parts : [block.trim()];
+}
+
+/** Splits on words when even a sentence is too long for Telegram. */
+function splitByWords(text: string, limit = TELEGRAM_HARD_LIMIT): string[] {
+  if (text.length <= limit) return [text];
+
+  const out: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > limit) {
+    const window = remaining.slice(0, limit);
+    const at = Math.max(window.lastIndexOf('\n'), window.lastIndexOf(' '));
+    const cut = at > limit * 0.5 ? at : limit;
+    out.push(remaining.slice(0, cut).trim());
+    remaining = remaining.slice(cut).trim();
+  }
+  if (remaining) out.push(remaining);
+  return out;
+}
+
+/**
+ * Breaks an over-long block into text-sized bubbles at sentence boundaries,
+ * packing as many sentences as fit under PREFERRED_MAX.
+ */
+function splitLongBlock(block: string): string[] {
+  const sentences = splitSentences(block);
+
+  // A single enormous "sentence" (no punctuation) — fall back to words.
+  if (sentences.length === 1 && sentences[0].length > PREFERRED_MAX) {
+    return splitByWords(sentences[0], PREFERRED_MAX);
+  }
+
+  const out: string[] = [];
+  let current = '';
+
+  for (const sentence of sentences) {
+    const candidate = current ? `${current} ${sentence}` : sentence;
+
+    if (candidate.length <= PREFERRED_MAX) {
+      current = candidate;
+      continue;
+    }
+
+    if (current) out.push(current);
+    // A sentence that alone exceeds the limit gets word-split.
+    if (sentence.length > PREFERRED_MAX) {
+      const pieces = splitByWords(sentence, PREFERRED_MAX);
+      out.push(...pieces.slice(0, -1));
+      current = pieces[pieces.length - 1] ?? '';
+    } else {
+      current = sentence;
+    }
+  }
+
+  if (current) out.push(current);
+  return out;
+}
+
+/** Merges a too-short bubble into the previous one, so we don't send "Ok." alone. */
+function mergeShortBubbles(bubbles: string[]): string[] {
+  const out: string[] = [];
+
+  for (const bubble of bubbles) {
+    const prev = out[out.length - 1];
+
+    if (prev !== undefined && bubble.length < MIN_BUBBLE) {
+      const merged = `${prev} ${bubble}`.trim();
+      if (merged.length <= PREFERRED_MAX) {
+        out[out.length - 1] = merged;
+        continue;
+      }
+    }
+
+    // Also fold a short previous bubble forward into a short current one.
+    if (
+      prev !== undefined &&
+      prev.length < MIN_BUBBLE &&
+      `${prev} ${bubble}`.trim().length <= PREFERRED_MAX
+    ) {
+      out[out.length - 1] = `${prev} ${bubble}`.trim();
+      continue;
+    }
+
+    out.push(bubble);
+  }
+
+  return out;
+}
+
+/**
+ * Public entry point: model reply text -> ordered list of chat bubbles.
+ * Always returns at least one non-empty bubble.
+ */
+export function splitIntoBubbles(rawReply: string): string[] {
+  const text = stripMarkdown(rawReply);
+  if (!text) return [];
+
+  // 1. Honour the model's own blank-line breaks.
+  let blocks = text
+    .split(/\n\s*\n/)
+    .map((b) => b.replace(/\n+/g, ' ').trim())
+    .filter(Boolean);
+
+  // 2. Break down any block that is still essay-length.
+  blocks = blocks.flatMap((block) =>
+    block.length > PREFERRED_MAX ? splitLongBlock(block) : [block],
+  );
+
+  // 3. Tidy, then enforce Telegram's hard limit.
+  blocks = mergeShortBubbles(blocks);
+  blocks = blocks.flatMap((b) =>
+    b.length > TELEGRAM_HARD_LIMIT ? splitByWords(b) : [b],
+  );
+
+  // 4. Cap the number of bubbles, merging any overflow into the last one.
+  if (blocks.length > MAX_BUBBLES) {
+    const head = blocks.slice(0, MAX_BUBBLES - 1);
+    const tail = blocks.slice(MAX_BUBBLES - 1).join(' ').trim();
+    blocks = [...head, ...splitByWords(tail)];
+  }
+
+  return blocks.map((b) => b.trim()).filter(Boolean);
+}
+
+/**
+ * A short, human-feeling pause between bubbles.
+ *
+ * Real people don't paste four paragraphs in the same instant, so we stagger
+ * the sends. It scales with length but is capped, because Telegram renders
+ * "typing…" during the gap and a long stall feels broken rather than human.
+ */
+export function bubbleDelayMs(bubble: string): number {
+  const base = 350;
+  const perChar = 12;
+  const spread = 250;
+  const jitter = Math.floor(Math.random() * spread);
+  return Math.min(base + bubble.length * perChar + jitter, 2200);
+}
+
+/** True when a reply reads as several messages rather than one. */
+export function isMultiBubble(bubbles: string[]): boolean {
+  return bubbles.length > 1;
+}
