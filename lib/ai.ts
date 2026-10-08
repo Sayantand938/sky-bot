@@ -40,15 +40,33 @@ export class AiError extends Error {
 }
 
 /**
- * Calls the model with the given conversation and returns the reply text.
- * Throws AiError with a message that is safe to show the Telegram user.
+ * Detects a leaked third-party system prompt.
+ *
+ * Observed in production: the upstream provider occasionally answers with
+ * boilerplate describing *its own* API ("You are an AI assistant accessed via
+ * an API… always output only the JSON object… The API is stateless…") instead
+ * of replying to the user. The model is really producing this — it is not our
+ * prompt, and it is not caused by the request we send. It appears
+ * intermittently, so we detect it and retry rather than show it to the user.
  */
-export async function generateReply(history: ChatMessage[]): Promise<string> {
-  const messages: ApiMessage[] = [
-    { role: 'system', content: systemPrompt() },
-    ...history.map((m) => ({ role: m.role, content: m.content })),
-  ];
+const LEAKED_PROMPT_MARKERS = [
+  'accessed via an api',
+  'the api is stateless',
+  'only the json object',
+  'output json',
+  'include all necessary context in each request',
+  'you are an ai assistant accessed',
+];
 
+function looksLikeLeakedPrompt(text: string): boolean {
+  const lower = text.toLowerCase();
+  const hits = LEAKED_PROMPT_MARKERS.filter((marker) => lower.includes(marker)).length;
+  // One marker can appear innocently; two or more means it is the boilerplate.
+  return hits >= 2;
+}
+
+/** One request to the model. Throws AiError on any failure. */
+async function requestOnce(messages: ApiMessage[]): Promise<string> {
   const controller = new AbortController();
   // Stay comfortably below the route's maxDuration so we can answer the user
   // with a real error instead of being killed by the platform.
@@ -115,4 +133,40 @@ export async function generateReply(history: ChatMessage[]): Promise<string> {
   }
 
   return text;
+}
+
+/**
+ * Calls the model with the given conversation and returns the reply text.
+ *
+ * Retries once if the provider returns leaked system-prompt boilerplate, which
+ * happens intermittently upstream. Two clean-ish bad answers in a row would be
+ * a strong signal that something changed, so in that case we return an
+ * apologetic message instead of the raw boilerplate.
+ *
+ * Throws AiError with a message that is safe to show the Telegram user.
+ */
+export async function generateReply(history: ChatMessage[]): Promise<string> {
+  const messages: ApiMessage[] = [
+    { role: 'system', content: systemPrompt() },
+    ...history.map((m) => ({ role: m.role, content: m.content })),
+  ];
+
+  const MAX_ATTEMPTS = 3;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    const text = await requestOnce(messages);
+
+    if (!looksLikeLeakedPrompt(text)) return text;
+
+    console.warn(
+      `[ai] attempt ${attempt}/${MAX_ATTEMPTS} returned leaked system-prompt ` +
+        `boilerplate; retrying. Text: ${text.slice(0, 200)}`,
+    );
+  }
+
+  // Every attempt leaked. Don't show the boilerplate to the user.
+  throw new AiError(
+    'The AI service returned a malformed answer. Please send that again.',
+    502,
+  );
 }
