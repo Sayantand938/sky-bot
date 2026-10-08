@@ -11,14 +11,51 @@ Telegram  ──POST──▶  /api/telegram  ──▶  AICredits /chat/complet
    └──────────── sendMessage (the reply) ◀───────┘
 ```
 
+## Meet Sky
+
+She is a **friend, an assistant, and a companion** — not a customer-service bot.
+Her persona lives in [`lib/config.ts`](lib/config.ts) (`systemPrompt()`):
+
+- Warm, curious, a little playful, with her own tastes and opinions.
+- Emotionally attentive: she responds to how you *sound* before answering the question.
+- **She texts like a person.** Most replies are one or two sentences — the
+  measured average is around **55–70 characters**.
+- When she has more to say, she sends it as **several short bubbles** with a
+  "typing…" pause between each, exactly like someone firing off a few texts.
+
+Rename her with the `BOT_NAME` env var.
+
+### How the bubble splitting works
+
+[`lib/persona.ts`](lib/persona.ts) converts one model reply into the sequence of
+messages a person would actually send:
+
+1. Honours the blank-line breaks she writes in her own reply.
+2. Breaks any essay-length block at sentence boundaries (limit: 220 chars).
+3. Strips markdown, which Telegram would otherwise show as literal `**` and `-`.
+4. Merges slivers so you never get a lonely "Ok." on its own line.
+5. Caps at 4 bubbles and enforces Telegram's 4096-character hard limit.
+
+Real observed output for *"how do I learn python from scratch?"*:
+
+```
+1. sendChatAction          ← "typing…"
+2. sendMessage[170 chars]  ← bubble 1
+3. sendChatAction          ← "typing…"
+4. sendMessage[129 chars]  ← bubble 2
+5. sendChatAction          ← "typing…"
+6. sendMessage[74 chars]   ← bubble 3
+```
+
 ## Features
 
+- A real personality with deliberately short, human-feeling replies.
+- **Multi-bubble replies** with typing indicators and natural pacing.
 - Conversational replies with **per-chat memory** (last 10 turns by default).
 - Telegram **secret-token** verification, so only Telegram can call your webhook.
 - Commands: `/start`, `/help`, `/reset`, `/whoami`.
 - Group-friendly: in groups it only answers when mentioned or replied to.
-- Long replies are split automatically at Telegram's 4096-character limit.
-- "typing…" indicator while the model thinks.
+- **Resilient to a flaky upstream**: leaked provider boilerplate is detected and retried.
 - Friendly error notices instead of silent failures.
 - Zero runtime dependencies beyond Next.js + React (all API calls use `fetch`).
 
@@ -125,19 +162,27 @@ Then **message your bot on Telegram** — it will reply.
 
 ## Verifying it works
 
-Three self-contained test scripts, runnable from a clean shell — they load
-`.env.local` themselves, so nothing needs to be exported first:
+Five self-contained test scripts, runnable from a clean shell — they load
+`.env.local` themselves, so nothing needs to be exported first. The last three
+need a build (`npm run build`) because they start the real app:
 
 ```bash
-node scripts/test-ai.mjs        # calls the AI API directly
-node scripts/test-webhook.mjs   # full webhook round-trip against a fake Telegram
-node scripts/test-memory.mjs    # multi-turn memory and /reset
+node scripts/test-bubbles.mjs         # reply splitting logic (offline + live)
+node scripts/test-split-delivery.mjs  # proves bubbles arrive as separate messages
+node scripts/test-ai.mjs              # calls the AI API directly
+node scripts/test-webhook.mjs         # full webhook round-trip against a fake Telegram
+node scripts/test-memory.mjs          # multi-turn memory and /reset
 ```
 
 `test-webhook.mjs` starts the built app on a spare port, stands up a local fake
 Telegram Bot API, posts a realistic update, and asserts the bot produced a real
 AI answer. It exits non-zero if the bot only sends an error notice, so a bad API
-key cannot produce a false pass. Run `npm run build` first.
+key cannot produce a false pass.
+
+`test-split-delivery.mjs` goes further: it asserts that a single reply is
+delivered as **several separate messages**, in order, with exactly one quoting
+your message, a typing indicator between bubbles, and real pacing (not all in
+the same millisecond). That is the check that proves she texts like a person.
 
 ---
 
@@ -190,15 +235,22 @@ app needs to change.
 
 ```
 app/
-  api/telegram/route.ts   Webhook: verify → handle → reply
+  api/telegram/route.ts   Webhook: verify → handle → reply as bubbles
   api/setup/route.ts      Registers the webhook with Telegram
   api/health/route.ts     Config check
   layout.tsx, page.tsx    Minimal status page
 lib/
-  config.ts               Reads/validates environment variables
-  ai.ts                   AICredits chat-completions client
-  telegram.ts             Telegram Bot API client
+  config.ts               Env vars + Sky's personality (systemPrompt)
+  persona.ts              Splits one reply into chat bubbles; pacing
+  ai.ts                   AICredits client, with leaked-prompt retry
+  telegram.ts             Telegram Bot API client, sequential bubble sends
   memory.ts               Per-chat conversation history
+scripts/
+  test-bubbles.mjs        Splitting logic + live conciseness check
+  test-split-delivery.mjs Proves bubbles arrive as separate messages
+  test-ai.mjs             Direct AI API smoke test
+  test-webhook.mjs        Full webhook round-trip
+  test-memory.mjs         Multi-turn memory and /reset
 ```
 
 ## Troubleshooting
@@ -222,6 +274,27 @@ Expected — see the memory section above.
 **Everything returns `401 unauthorized` from `/api/telegram`.**
 `TELEGRAM_WEBHOOK_SECRET` changed after the webhook was registered. Re-run
 `/api/setup` so Telegram receives the new secret.
+
+**She replies with something about "an AI accessed via an API" or JSON output.**
+That is the *upstream provider* leaking its own system prompt — not your prompt,
+and not a bug in this code. It happens intermittently at their end. `lib/ai.ts`
+already detects it and retries up to 3 times. If you still see it, search the
+Vercel logs for `[ai] attempt` to confirm the retry fired.
+
+**Her replies are too long / too short, or not splitting into bubbles.**
+Tune the persona in [`lib/config.ts`](lib/config.ts) (`systemPrompt()`) and the
+thresholds at the top of [`lib/persona.ts`](lib/persona.ts): `PREFERRED_MAX`
+(220) controls when a block gets split, `MAX_BUBBLES` (4) caps how many she sends.
+Verify changes with `node scripts/test-bubbles.mjs`.
+
+**She sounds generic and lost her personality.**
+An `AI_SYSTEM_PROMPT` value is set somewhere and is overriding her persona —
+that variable replaces her *entire* prompt. Remove it from Vercel (and
+`.env.local`) to restore the built-in personality. Check with:
+
+```bash
+vercel env ls production | grep AI_SYSTEM_PROMPT
+```
 
 ## Security notes
 
