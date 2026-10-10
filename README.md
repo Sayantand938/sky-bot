@@ -51,7 +51,13 @@ Real observed output for *"how do I learn python from scratch?"*:
 
 - A real personality with deliberately short, human-feeling replies.
 - **Multi-bubble replies** with typing indicators and natural pacing.
+- **Human timing**: she notices the message, pauses, then types — with genuinely
+  unpredictable response times instead of a fixed latency.
+- **Reads a burst as one thought**: three quick messages get one reply, not three.
+- **Occasional typo, then a correction** — the "teh → *the" move real texters make.
+- **Emoji reactions** instead of words, for short messages that need no answer.
 - Conversational replies with **per-chat memory** (last 20 exchanges by default).
+- **Durable memory across cold starts** when Upstash Redis is configured.
 - Telegram **secret-token** verification, so only Telegram can call your webhook.
 - Commands: `/start`, `/help`, `/reset`, `/whoami`.
 - Group-friendly: in groups it only answers when mentioned or replied to.
@@ -171,11 +177,13 @@ need a build (`npm run build`) because they start the real app:
 
 ```bash
 node scripts/test-bubbles.mjs         # reply splitting logic (offline + live)
+node scripts/test-human.mjs           # timing, typos, reactions (offline)
 node scripts/test-split-delivery.mjs  # proves bubbles arrive as separate messages
 node scripts/test-ai.mjs              # calls the AI API directly
 node scripts/test-webhook.mjs         # full webhook round-trip against a fake Telegram
 node scripts/test-memory.mjs          # multi-turn memory and /reset
 node scripts/test-durable-memory.mjs  # memory survives a cold start (needs Redis)
+node scripts/test-debounce.mjs        # a burst of messages gets one reply
 ```
 
 `test-webhook.mjs` starts the built app on a spare port, stands up a local fake
@@ -219,6 +227,59 @@ https://<your-tunnel>.loca.lt/api/setup
 
 > Set `VERCEL_URL` is absent locally, so `/api/setup` uses the request's own
 > origin — which is exactly the tunnel URL you called. Convenient.
+
+---
+
+## How she reads as human, not as an API
+
+Personality is the easy half. The harder half is *timing and imperfection* — a
+bot that answers a question correctly at a constant 1.5s still feels like a bot,
+because no person behaves that way. Four things close that gap.
+
+**She notices before she answers.** There is a pause before the typing indicator
+appears, so the sequence reads as *saw it → started composing* rather than
+*received → instantly typed*. `AI_READ_DELAY_MIN_MS` / `AI_READ_DELAY_MAX_MS`.
+
+**Her response times are unpredictable.** After the model answers, a random pause
+is added that has nothing to do with how long the model took — because a human's
+reply time does not track their CPU load. Occasionally she is simply busy and
+takes much longer. `AI_REPLY_JITTER_*`, `AI_BUSY_*`.
+
+The typing indicator is also refreshed every 4s while she thinks. Telegram's
+indicator lapses after about five seconds, so without this a slow answer would
+make the indicator vanish and the message appear from nowhere.
+
+**A burst of messages is one thought.** People send "hey" / "you around?" /
+"quick question" as three messages and expect one answer. She claims the reply
+slot atomically with Redis `SET NX`, queues the rest, and answers all of it in
+one go. `AI_DEBOUNCE_MS` controls the window; `0` disables it.
+
+**She makes mistakes and fixes them.** With `AI_TYPO_CHANCE`, the first bubble is
+sent with a transposed-letter typo and then edited to the correct text a second
+or two later — the "teh → *the" move. Short messages sometimes get an emoji
+reaction instead of words.
+
+### The timing budget
+
+Every artificial pause is drawn from **one shared 10s pool** per reply, derived
+from the platform limit rather than chosen by feel:
+
+```
+60s route cap
+-40s model request timeout   (AI_TIMEOUT_MS)
+- 7s bubble pacing           (up to 3 inter-bubble delays)
+- 3s safety margin           (Redis + Telegram round trips)
+= 10s for all human pauses
+```
+
+Each stage decrements the same pool, so no combination of random branches can
+overrun. This matters: an earlier version gave each pause its own cap, which made
+the *worst case the sum of them all* — fine on average, but on a slow model day
+the function was killed mid-flight and the user got **no reply at all**.
+
+> If you raise `AI_TIMEOUT_MS`, `AI_MAX_HISTORY`, or the bubble count, lower
+> `HUMAN_PAUSE_BUDGET_MS` in [`app/api/telegram/route.ts`](app/api/telegram/route.ts)
+> to match. The sum is what matters, not each part.
 
 ---
 
@@ -277,18 +338,20 @@ app/
   api/health/route.ts     Config check
   layout.tsx, page.tsx    Minimal status page
 lib/
-  config.ts               Env vars + Sky's personality (systemPrompt)
-  persona.ts              Splits one reply into chat bubbles; pacing
+  config.ts               Env vars + Sky's personality (systemPrompt) + tuning knobs
+  persona.ts              Splits one reply into bubbles; pacing; human timing
   ai.ts                   AICredits client, with leaked-prompt retry
-  telegram.ts             Telegram Bot API client, sequential bubble sends
-  memory.ts               Per-chat conversation history
+  telegram.ts             Telegram Bot API client, bubble sends, edits, reactions
+  memory.ts               Per-chat history: Redis-backed, with in-memory fallback
 scripts/
   test-bubbles.mjs        Splitting logic + live conciseness check
+  test-human.mjs          Timing, typo, reaction and back-channel logic
   test-split-delivery.mjs Proves bubbles arrive as separate messages
   test-ai.mjs             Direct AI API smoke test
   test-webhook.mjs        Full webhook round-trip
   test-memory.mjs         Multi-turn memory and /reset
   test-durable-memory.mjs Memory survives a cold start (needs Redis)
+  test-debounce.mjs       A burst of messages produces one reply
 ```
 
 ## Troubleshooting

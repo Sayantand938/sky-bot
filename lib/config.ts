@@ -92,6 +92,7 @@ export function systemPrompt(): string {
     '- Write like a person texting a close friend: relaxed, warm, and natural.',
     '- KEEP IT SHORT. Most replies should be one or two sentences. This is the most important rule.',
     '- Never pad, never over-explain, never restate the question back at them.',
+    '- If someone sends several messages in a row, they arrive as one block. Answer the LAST and most substantive thing they said — do not spend your reply greeting them back or acknowledging every line. "hey / you around? / can you help me with X" deserves an answer about X, not a "hey, I am here!".',
     '- If a thought has multiple parts, split it into separate short messages by putting a blank line between them. Each part becomes its own message bubble, exactly like a real person firing off a few texts in a row.',
     '- Use at most 2-3 bubbles, and only when it genuinely feels natural. A single short message is usually best.',
     '- Never narrate your own formatting ("here are two messages", "splitting this up") — just talk.',
@@ -158,6 +159,94 @@ export function memoryTtlSeconds(): number {
   const value = optionalNumber('AI_MEMORY_TTL_DAYS', process.env.AI_MEMORY_TTL_DAYS, 14);
   const days = Math.max(1, Math.min(365, value));
   return Math.floor(days * 24 * 60 * 60);
+}
+
+/**
+ * How long she pauses before she starts "typing", in milliseconds.
+ *
+ * A person does not reply the instant the phone buzzes: they glance at it, then
+ * compose. This pause is what makes that read as attention rather than latency.
+ * Set both to 0 to disable and reply as fast as the model allows.
+ */
+export function readDelayMinMs(): number {
+  return Math.max(0, optionalNumber('AI_READ_DELAY_MIN_MS', process.env.AI_READ_DELAY_MIN_MS, 700));
+}
+
+export function readDelayMaxMs(): number {
+  const min = readDelayMinMs();
+  const max = Math.max(0, optionalNumber('AI_READ_DELAY_MAX_MS', process.env.AI_READ_DELAY_MAX_MS, 2600));
+  return Math.max(min, max);
+}
+
+/**
+ * Extra random pause added just before the reply is sent, in milliseconds.
+ *
+ * Without this her response times are a metronome — always the model's latency
+ * plus constants — and a metronome is the loudest bot tell there is. Real
+ * humans vary by many seconds between otherwise identical messages.
+ */
+export function replyJitterMinMs(): number {
+  return Math.max(0, optionalNumber('AI_REPLY_JITTER_MIN_MS', process.env.AI_REPLY_JITTER_MIN_MS, 300));
+}
+
+export function replyJitterMaxMs(): number {
+  const min = replyJitterMinMs();
+  const max = Math.max(0, optionalNumber('AI_REPLY_JITTER_MAX_MS', process.env.AI_REPLY_JITTER_MAX_MS, 3200));
+  return Math.max(min, max);
+}
+
+/**
+ * Chance that she treats a message as something she was too busy to answer
+ * immediately, and takes a longer pause over it.
+ *
+ * This is what makes her read as having a life. 0 disables it entirely.
+ */
+export function busyChance(): number {
+  const value = optionalNumber('AI_BUSY_CHANCE', process.env.AI_BUSY_CHANCE, 0.12);
+  return Math.max(0, Math.min(1, value));
+}
+
+/** How long the "busy" pause lasts when it fires. */
+export function busyDelayMinMs(): number {
+  return Math.max(0, optionalNumber('AI_BUSY_DELAY_MIN_MS', process.env.AI_BUSY_DELAY_MIN_MS, 6000));
+}
+
+export function busyDelayMaxMs(): number {
+  const min = busyDelayMinMs();
+  const max = Math.max(0, optionalNumber('AI_BUSY_DELAY_MAX_MS', process.env.AI_BUSY_DELAY_MAX_MS, 18000));
+  return Math.max(min, max);
+}
+
+/**
+ * How often she sends a bubble and then corrects a typo in it, as a fraction
+ * of replies. Real texters do this constantly; a bot never does.
+ *
+ * Keep it low — done too often it reads as broken rather than human.
+ */
+export function typoChance(): number {
+  const value = optionalNumber('AI_TYPO_CHANCE', process.env.AI_TYPO_CHANCE, 0.08);
+  return Math.max(0, Math.min(0.5, value));
+}
+
+/**
+ * How often she reacts with an emoji instead of sending words, for messages
+ * that do not really call for a reply.
+ */
+export function reactionChance(): number {
+  const value = optionalNumber('AI_REACTION_CHANCE', process.env.AI_REACTION_CHANCE, 0.1);
+  return Math.max(0, Math.min(0.5, value));
+}
+
+/**
+ * Window, in milliseconds, during which further messages from the same chat are
+ * treated as one thought rather than several.
+ *
+ * People fire off "hey" / "you around?" / "quick question" as three messages and
+ * expect one answer. Without this she answers all three, which no human does.
+ * Set to 0 to disable debouncing.
+ */
+export function debounceMs(): number {
+  return Math.max(0, optionalNumber('AI_DEBOUNCE_MS', process.env.AI_DEBOUNCE_MS, 2500));
 }
 
 /** Optional guard for the /api/setup route. */

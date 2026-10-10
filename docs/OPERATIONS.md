@@ -80,6 +80,14 @@ Set in Vercel → Project Settings → Environment Variables. Real values live i
 | `AI_MODEL` | optional | Default `deepseek/deepseek-v4.1-flash`. |
 | `AI_BASE_URL` | optional | Default `https://api.aicredits.in/v1`. |
 | `AI_MAX_HISTORY` | optional | Remembered messages per chat. Default `40` (≈20 exchanges), clamped to `50`. |
+| `AI_READ_DELAY_MIN_MS` / `_MAX_MS` | optional | Pause before she starts typing. Defaults `700` / `2600`. |
+| `AI_REPLY_JITTER_MIN_MS` / `_MAX_MS` | optional | Random extra pause before replying. Defaults `300` / `3200`. |
+| `AI_BUSY_CHANCE` | optional | Chance she was busy and pauses longer. Default `0.12`. |
+| `AI_BUSY_DELAY_MIN_MS` / `_MAX_MS` | optional | Length of that pause. Defaults `6000` / `18000`. |
+| `AI_TYPO_CHANCE` | optional | Chance of a typo-then-correction. Default `0.08`. |
+| `AI_REACTION_CHANCE` | optional | Chance of an emoji reaction instead of words. Default `0.1`. |
+| `AI_DEBOUNCE_MS` | optional | Messages within this window are one thought. Default `2500`, `0` disables. |
+| `AI_TIMEOUT_MS` | optional | Model request timeout. Default `40000`. |
 | `UPSTASH_REDIS_REST_URL` | recommended | Upstash Redis endpoint. Enables durable memory. |
 | `UPSTASH_REDIS_REST_TOKEN` | recommended | Upstash Redis token. Both this and the URL must be set. |
 | `AI_MEMORY_TTL_DAYS` | optional | Days of silence before a chat is forgotten. Default `14`. |
@@ -102,6 +110,10 @@ Set in Vercel → Project Settings → Environment Variables. Real values live i
 | Pause length between bubbles | `bubbleDelayMs()` in [`lib/persona.ts`](../lib/persona.ts) |
 | How much she remembers | `AI_MAX_HISTORY` env var (default 40, max 50) |
 | How long memory lasts | `UPSTASH_REDIS_REST_URL` + `_TOKEN` (durable); `AI_MEMORY_TTL_DAYS` for expiry |
+| How human her timing feels | `AI_READ_DELAY_*`, `AI_REPLY_JITTER_*`, `AI_BUSY_*` env vars |
+| How often she makes a typo | `AI_TYPO_CHANCE` (default 0.08) |
+| How often she reacts with an emoji | `AI_REACTION_CHANCE` (default 0.1) |
+| Merging a burst into one reply | `AI_DEBOUNCE_MS` (default 2500, 0 disables) |
 | Markdown stripping rules | `stripMarkdown()` in [`lib/persona.ts`](../lib/persona.ts) |
 
 After changing anything, verify before pushing:

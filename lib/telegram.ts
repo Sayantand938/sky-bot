@@ -202,6 +202,84 @@ export async function sendTyping(chatId: number): Promise<void> {
   }
 }
 
+/** Telegram's typing indicator lapses after about five seconds. */
+const TYPING_LAPSE_MS = 4000;
+
+/**
+ * Keeps "typing…" alive for the duration of an async operation.
+ *
+ * Without this the indicator expires during a slow model call and the reply
+ * simply appears from nowhere — which looks broken rather than human. Returns a
+ * stop function; safe to call more than once.
+ */
+export function keepTyping(chatId: number): () => void {
+  let stopped = false;
+
+  void sendTyping(chatId);
+  const timer = setInterval(() => {
+    if (!stopped) void sendTyping(chatId);
+  }, TYPING_LAPSE_MS);
+
+  // Don't hold the serverless invocation open just for the indicator.
+  if (typeof timer === 'object' && 'unref' in timer && typeof timer.unref === 'function') {
+    timer.unref();
+  }
+
+  return () => {
+    stopped = true;
+    clearInterval(timer);
+  };
+}
+
+/**
+ * Edits a message that was already sent — used to correct a deliberate typo.
+ *
+ * Best-effort: a failed edit leaves the original text in place, which is a
+ * harmless outcome, so this never throws.
+ */
+export async function editMessageText(
+  chatId: number,
+  messageId: number,
+  text: string,
+): Promise<boolean> {
+  try {
+    await callTelegram('editMessageText', {
+      chat_id: chatId,
+      message_id: messageId,
+      text,
+      link_preview_options: { is_disabled: true },
+    });
+    return true;
+  } catch (error) {
+    console.error('[telegram] editMessageText failed:', error);
+    return false;
+  }
+}
+
+/**
+ * Reacts to a message with an emoji instead of replying to it.
+ *
+ * Best-effort: reactions are a nicety, so a failure here is swallowed and the
+ * caller carries on as though nothing happened.
+ */
+export async function setMessageReaction(
+  chatId: number,
+  messageId: number,
+  emoji: string,
+): Promise<boolean> {
+  try {
+    await callTelegram('setMessageReaction', {
+      chat_id: chatId,
+      message_id: messageId,
+      reaction: [{ type: 'emoji', emoji }],
+    });
+    return true;
+  } catch (error) {
+    console.error('[telegram] setMessageReaction failed:', error);
+    return false;
+  }
+}
+
 /** Registers the webhook URL with Telegram. */
 export async function setWebhook(
   url: string,

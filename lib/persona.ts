@@ -1,3 +1,14 @@
+import {
+  busyChance,
+  busyDelayMaxMs,
+  busyDelayMinMs,
+  reactionChance,
+  readDelayMaxMs,
+  readDelayMinMs,
+  replyJitterMaxMs,
+  replyJitterMinMs,
+} from './config';
+
 /**
  * Turns one model reply into the sequence of separate Telegram messages a
  * person would actually send.
@@ -204,4 +215,159 @@ export function bubbleDelayMs(bubble: string): number {
 /** True when a reply reads as several messages rather than one. */
 export function isMultiBubble(bubbles: string[]): boolean {
   return bubbles.length > 1;
+}
+
+// ---------------------------------------------------------------------------
+// Human timing
+// ---------------------------------------------------------------------------
+
+/** Injectable randomness, so tests can be deterministic. */
+export type Random = () => number;
+
+const realRandom: Random = () => Math.random();
+
+/** Uniform integer in [min, max]. */
+function between(min: number, max: number, random: Random = realRandom): number {
+  if (max <= min) return Math.max(0, Math.round(min));
+  return Math.round(min + random() * (max - min));
+}
+
+/**
+ * How long she waits before starting to type — the pause where she notices the
+ * message. Always applied, so even an instant model reply feels attended to.
+ */
+export function readDelayMs(random: Random = realRandom): number {
+  return between(readDelayMinMs(), readDelayMaxMs(), random);
+}
+
+/**
+ * The full delay between the user's message and her reply being sent.
+ *
+ * This is where "human" actually lives. The delay is deliberately unpredictable:
+ * a fast model call still waits, and occasionally she is busy and takes much
+ * longer. Nothing here correlates with how long the model took, which is the
+ * point — a human's reply time does not track their CPU load.
+ *
+ * `budgetMs` caps the total so a slow model plus a long pause cannot run the
+ * function past the platform's timeout.
+ */
+export function replyDelayMs(
+  options: { random?: Random; budgetMs?: number } = {},
+): number {
+  const random = options.random ?? realRandom;
+
+  let total = between(replyJitterMinMs(), replyJitterMaxMs(), random);
+
+  // Occasionally she was doing something else.
+  if (random() < busyChance()) {
+    total += between(busyDelayMinMs(), busyDelayMaxMs(), random);
+  }
+
+  if (options.budgetMs !== undefined) {
+    total = Math.min(total, Math.max(0, options.budgetMs));
+  }
+
+  return total;
+}
+
+// ---------------------------------------------------------------------------
+// Typos and corrections
+// ---------------------------------------------------------------------------
+
+/**
+ * Introduces a plausible typo into a bubble.
+ *
+ * Deliberately conservative: only adjacent-character transpositions and one
+ * doubled letter. Those are what real thumbs produce, and they stay readable, so
+ * the correction reads as a person fixing a slip rather than as a broken bot.
+ *
+ * Returns null when no safe typo site exists — callers must handle that rather
+ * than assume a typo was made.
+ */
+export function introduceTypo(bubble: string, random: Random = realRandom): string | null {
+  // Only meaningful on a bubble with enough words to hide the slip in.
+  const words = bubble.split(/\s+/);
+  if (words.length < 3) return null;
+
+  // Never touch the first word or the last: it hides the typo mid-sentence,
+  // which is where real slips happen.
+  const candidates: number[] = [];
+  for (let i = 1; i < words.length - 1; i += 1) {
+    if (words[i].length >= 4 && /^[A-Za-z]+$/.test(words[i])) candidates.push(i);
+  }
+  if (candidates.length === 0) return null;
+
+  const index = candidates[Math.floor(random() * candidates.length)];
+  const word = words[index];
+
+  // Transpose two adjacent inner characters: "because" -> "becuase".
+  const at = 1 + Math.floor(random() * (word.length - 2));
+  const swapped = word.slice(0, at) + word[at + 1] + word[at] + word.slice(at + 2);
+
+  // A transposition that happens to be identical (double letters) is not a typo.
+  if (swapped === word) return null;
+
+  const next = [...words];
+  next[index] = swapped;
+  return next.join(' ');
+}
+
+/**
+ * How long after sending a mistaken bubble the correction arrives.
+ *
+ * A person notices almost immediately, so this is short — but not instant, or
+ * the edit lands before the first message has been read and nobody sees it.
+ */
+export function correctionDelayMs(random: Random = realRandom): number {
+  return between(1200, 3600, random);
+}
+
+// ---------------------------------------------------------------------------
+// Reactions
+// ---------------------------------------------------------------------------
+
+/** Emoji she might send instead of words, for messages that need no answer. */
+const REACTIONS = ['👍', '❤️', '😂', '🔥', '🙌', '😮', '👀'];
+
+/**
+ * Decides whether a message deserves an emoji reaction instead of a written
+ * reply, and which one.
+ *
+ * Only ever fires for short messages — reacting with 👍 to a paragraph would
+ * read as being brushed off, which is the opposite of the intent.
+ */
+export function pickReaction(
+  userText: string,
+  random: Random = realRandom,
+): string | null {
+  const text = userText.trim();
+
+  // Long or question-shaped messages always deserve a real answer.
+  if (text.length > 60) return null;
+  if (text.includes('?')) return null;
+
+  if (random() >= reactionChance()) return null;
+  return REACTIONS[Math.floor(random() * REACTIONS.length)];
+}
+
+// ---------------------------------------------------------------------------
+// Back-channels
+// ---------------------------------------------------------------------------
+
+/** Small acknowledgements she might send as their own bubble before answering. */
+const BACKCHANNELS = ['hmm', 'oh nice', 'wait', 'ok so', 'hah', 'oh', 'right?'];
+
+/**
+ * Chooses an optional short back-channel bubble to send before the real answer.
+ *
+ * This is the "hmm" that arrives while someone is still thinking. Only used on
+ * longer replies, where a human would plausibly stall for a moment first.
+ */
+export function pickBackchannel(
+  reply: string,
+  random: Random = realRandom,
+): string | null {
+  if (reply.length < 120) return null;
+  if (random() >= 0.18) return null;
+  return BACKCHANNELS[Math.floor(random() * BACKCHANNELS.length)];
 }

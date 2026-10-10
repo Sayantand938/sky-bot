@@ -8,7 +8,7 @@
  * Run:  node scripts/test-bubbles.mjs
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -39,12 +39,17 @@ loadEnvFile(resolve(root, '.env'));
 // ---------------------------------------------------------------------------
 // Import the TypeScript module by compiling it on the fly with esbuild-free
 // trickery: node can't import .ts directly, so we transpile a copy.
+//
+// persona.ts imports its tuning values from ./config, so both files are compiled
+// together — compiling persona alone produces an import that cannot resolve in
+// the temp directory.
 // ---------------------------------------------------------------------------
 const tmp = mkdtempSync(resolve(tmpdir(), 'persona-'));
 const tsc = resolve(root, 'node_modules/typescript/bin/tsc');
 const res = spawnSync(
   process.execPath,
-  [tsc, resolve(root, 'lib/persona.ts'), '--outDir', tmp, '--module', 'esnext',
+  [tsc, resolve(root, 'lib/persona.ts'), resolve(root, 'lib/config.ts'),
+   '--outDir', tmp, '--module', 'esnext',
    '--target', 'es2022', '--moduleResolution', 'bundler', '--skipLibCheck'],
   { encoding: 'utf8' },
 );
@@ -52,6 +57,18 @@ if (res.status !== 0) {
   console.error('✖ could not compile lib/persona.ts');
   console.error(res.stdout || '', res.stderr || '');
   process.exit(1);
+}
+
+// tsc leaves relative imports extensionless ('./config'), but Node's ESM loader
+// requires an explicit '.js'. Rather than add a bundler just for a test, rewrite
+// the specifier in the emitted file.
+{
+  const emitted = resolve(tmp, 'persona.js');
+  const source = readFileSync(emitted, 'utf8').replace(
+    /from ['"]\.\/([A-Za-z0-9_-]+)['"]/g,
+    "from './$1.js'",
+  );
+  writeFileSync(emitted, source);
 }
 
 const { splitIntoBubbles, bubbleDelayMs } = await import(

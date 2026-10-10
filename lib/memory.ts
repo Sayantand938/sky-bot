@@ -43,6 +43,10 @@ const MAX_TRACKED_CHATS = 500;
 
 const lastSeen = new Map<number, number>();
 
+/** Local debounce state, used only on the in-memory fallback path. */
+const localDebounce = new Map<number, number>();
+const localBurst = new Map<number, string[]>();
+
 /** Redis key for one chat's transcript. */
 function historyKey(chatId: number): string {
   return `sky:history:${chatId}`;
@@ -262,6 +266,92 @@ export async function clearHistory(chatId: number): Promise<void> {
     // Worth surfacing: /reset promises the user their history is gone, and on
     // this path it may not be. Still not fatal to the reply.
     console.error('[memory] redis delete failed; history may not be cleared:', error);
+  }
+}
+
+/**
+ * Claims the right to answer a chat, so a burst of quick messages gets one reply.
+ *
+ * People send "hey" / "you around?" / "quick question" as three messages and
+ * expect a single answer. Returns true for the first message in a burst (the one
+ * that should reply) and false for the ones that follow within `windowMs`.
+ *
+ * Uses SET NX so the claim is atomic even when two serverless instances handle
+ * two messages at the same instant — without that, both would think they were
+ * first and the user would still get two replies.
+ *
+ * Fails open: if Redis is unavailable this always returns true, because a
+ * duplicate reply is a far better failure than a message that never gets one.
+ */
+export async function claimReplySlot(chatId: number, windowMs: number): Promise<boolean> {
+  if (windowMs <= 0) return true;
+
+  if (!redisConfigured()) {
+    // Single-instance fallback, best-effort.
+    const now = Date.now();
+    const until = localDebounce.get(chatId) ?? 0;
+    if (now < until) return false;
+    localDebounce.set(chatId, now + windowMs);
+    return true;
+  }
+
+  try {
+    const [entry] = await pipeline([
+      ['SET', `sky:debounce:${chatId}`, '1', 'NX', 'PX', String(windowMs)],
+    ]);
+    if (entry?.error) throw new Error(entry.error);
+    // SET with NX returns "OK" when the key was created, null when it existed.
+    return entry?.result === 'OK';
+  } catch (error) {
+    console.error('[memory] debounce claim failed; answering anyway:', error);
+    return true;
+  }
+}
+
+/**
+ * Records a message that arrived during a debounce window, without replying.
+ *
+ * The burst's earlier messages are held here rather than in the transcript,
+ * because the answering invocation needs to read them as one combined prompt —
+ * but they must not each become their own turn.
+ */
+export async function queueBurstMessage(chatId: number, text: string): Promise<void> {
+  if (!redisConfigured()) {
+    const queued = localBurst.get(chatId) ?? [];
+    queued.push(text);
+    localBurst.set(chatId, queued);
+    return;
+  }
+
+  try {
+    await pipeline([
+      ['RPUSH', `sky:burst:${chatId}`, text],
+      ['EXPIRE', `sky:burst:${chatId}`, 120],
+    ]);
+  } catch (error) {
+    console.error('[memory] could not queue a burst message:', error);
+  }
+}
+
+/** Drains and returns any messages queued during the debounce window. */
+export async function drainBurstMessages(chatId: number): Promise<string[]> {
+  if (!redisConfigured()) {
+    const queued = localBurst.get(chatId) ?? [];
+    localBurst.delete(chatId);
+    return queued;
+  }
+
+  try {
+    const [entry] = await pipeline([
+      ['LRANGE', `sky:burst:${chatId}`, 0, -1],
+      ['DEL', `sky:burst:${chatId}`],
+    ]);
+    if (entry?.error) throw new Error(entry.error);
+    const raw = Array.isArray(entry?.result) ? (entry.result as unknown[]) : [];
+    return raw.filter((item): item is string => typeof item === 'string');
+  } catch (error) {
+    console.error('[memory] could not drain queued burst messages:', error);
+    return [];
   }
 }
 

@@ -65,12 +65,32 @@ function looksLikeLeakedPrompt(text: string): boolean {
   return hits >= 2;
 }
 
+/**
+ * How long a single model request may run before it is aborted.
+ *
+ * The webhook route has a 60s platform limit, and after the model returns there
+ * is still work to do: sending up to four bubbles, each preceded by a paced
+ * delay of up to 2.2s. The old 55s ceiling left only 5s for that, so on a slow
+ * day the function could be killed after the model answered but before the user
+ * saw anything — the worst possible failure.
+ *
+ * 40s keeps the whole path inside the limit with room to spare, and still sits
+ * far above the ~1.5s the model normally takes. Override with AI_TIMEOUT_MS.
+ */
+function requestTimeoutMs(): number {
+  const raw = process.env.AI_TIMEOUT_MS?.trim();
+  if (!raw) return 40_000;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 40_000;
+  return Math.floor(parsed);
+}
+
 /** One request to the model. Throws AiError on any failure. */
 async function requestOnce(messages: ApiMessage[]): Promise<string> {
   const controller = new AbortController();
   // Stay comfortably below the route's maxDuration so we can answer the user
   // with a real error instead of being killed by the platform.
-  const timeout = setTimeout(() => controller.abort(), 55_000);
+  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs());
 
   let response: Response;
   try {
