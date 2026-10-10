@@ -79,7 +79,7 @@ Set in Vercel → Project Settings → Environment Variables. Real values live i
 | `AI_SYSTEM_PROMPT` | ⚠️ | **Replaces her entire personality.** Leave unset. |
 | `AI_MODEL` | optional | Default `deepseek/deepseek-v4.1-flash`. |
 | `AI_BASE_URL` | optional | Default `https://api.aicredits.in/v1`. |
-| `AI_MAX_HISTORY` | optional | Remembered messages per chat. Default `10`. |
+| `AI_MAX_HISTORY` | optional | Remembered messages per chat. Default `40` (≈20 exchanges), clamped to `50`. |
 | `AI_TEMPERATURE` | optional | Default `0.7`. |
 | `AI_MAX_TOKENS` | optional | Reply length cap. Default `1024`. |
 
@@ -97,7 +97,7 @@ Set in Vercel → Project Settings → Environment Variables. Real values live i
 | When long replies get split | `PREFERRED_MAX` in [`lib/persona.ts`](../lib/persona.ts) (default 220) |
 | How many bubbles she can send | `MAX_BUBBLES` in [`lib/persona.ts`](../lib/persona.ts) (default 4) |
 | Pause length between bubbles | `bubbleDelayMs()` in [`lib/persona.ts`](../lib/persona.ts) |
-| How much she remembers | `AI_MAX_HISTORY` env var (default 10) |
+| How much she remembers | `AI_MAX_HISTORY` env var (default 40, max 50) |
 | Markdown stripping rules | `stripMarkdown()` in [`lib/persona.ts`](../lib/persona.ts) |
 
 After changing anything, verify before pushing:

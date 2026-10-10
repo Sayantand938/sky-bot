@@ -51,7 +51,7 @@ Real observed output for *"how do I learn python from scratch?"*:
 
 - A real personality with deliberately short, human-feeling replies.
 - **Multi-bubble replies** with typing indicators and natural pacing.
-- Conversational replies with **per-chat memory** (last 10 turns by default).
+- Conversational replies with **per-chat memory** (last 20 exchanges by default).
 - Telegram **secret-token** verification, so only Telegram can call your webhook.
 - Commands: `/start`, `/help`, `/reset`, `/whoami`.
 - Group-friendly: in groups it only answers when mentioned or replied to.
@@ -125,7 +125,7 @@ vercel --prod
 | `AI_BASE_URL` | optional | Defaults to `https://api.aicredits.in/v1`. |
 | `AI_MODEL` | optional | Defaults to `deepseek/deepseek-v4.1-flash`. |
 | `AI_SYSTEM_PROMPT` | optional | Changes the bot's personality. |
-| `AI_MAX_HISTORY` | optional | Remembered messages per chat. Default `10`. |
+| `AI_MAX_HISTORY` | optional | Remembered messages per chat. Default `40` (≈20 exchanges), clamped to `50`. |
 | `AI_TEMPERATURE` | optional | `0`–`2`. Default `0.7`. |
 | `AI_MAX_TOKENS` | optional | Reply length cap. Default `1024`. |
 
