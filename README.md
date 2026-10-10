@@ -126,6 +126,9 @@ vercel --prod
 | `AI_MODEL` | optional | Defaults to `deepseek/deepseek-v4.1-flash`. |
 | `AI_SYSTEM_PROMPT` | optional | Changes the bot's personality. |
 | `AI_MAX_HISTORY` | optional | Remembered messages per chat. Default `40` (≈20 exchanges), clamped to `50`. |
+| `UPSTASH_REDIS_REST_URL` | recommended | Upstash Redis endpoint. Enables durable memory. |
+| `UPSTASH_REDIS_REST_TOKEN` | recommended | Upstash Redis token. Both this and the URL must be set. |
+| `AI_MEMORY_TTL_DAYS` | optional | Days of silence before a chat is forgotten. Default `14`. |
 | `AI_TEMPERATURE` | optional | `0`–`2`. Default `0.7`. |
 | `AI_MAX_TOKENS` | optional | Reply length cap. Default `1024`. |
 
@@ -172,6 +175,7 @@ node scripts/test-split-delivery.mjs  # proves bubbles arrive as separate messag
 node scripts/test-ai.mjs              # calls the AI API directly
 node scripts/test-webhook.mjs         # full webhook round-trip against a fake Telegram
 node scripts/test-memory.mjs          # multi-turn memory and /reset
+node scripts/test-durable-memory.mjs  # memory survives a cold start (needs Redis)
 ```
 
 `test-webhook.mjs` starts the built app on a spare port, stands up a local fake
@@ -183,6 +187,12 @@ key cannot produce a false pass.
 delivered as **several separate messages**, in order, with exactly one quoting
 your message, a typing indicator between bubbles, and real pacing (not all in
 the same millisecond). That is the check that proves she texts like a person.
+
+`test-durable-memory.mjs` is the one that separates Tier 0 from Tier 1. It sends
+a turn, **hard-kills the app**, starts a brand new process, and asks again — the
+cold start a Vercel function experiences. It passes only if the reply comes back
+from Redis. Without Redis configured it prints `SKIPPED` and exits 0, so an
+unconfigured run can never be mistaken for a verified one.
 
 ---
 
@@ -214,8 +224,21 @@ https://<your-tunnel>.loca.lt/api/setup
 
 ## How conversation memory works
 
-`lib/memory.ts` keeps a `Map<chatId, messages[]>` on the server instance.
-It is intentionally simple, and it has real limits you should know about:
+`lib/memory.ts` supports two interchangeable backends behind one interface
+(`getHistory`, `appendTurn`, `clearHistory`, `memoryStats` — all async).
+
+**Durable (Upstash Redis)** — used when `UPSTASH_REDIS_REST_URL` and
+`UPSTASH_REDIS_REST_TOKEN` are both set. Each chat is one Redis list at
+`sky:history:<chatId>`, holding JSON-encoded turns. History is therefore
+**shared across every serverless instance and survives cold starts**. Writes are
+pipelined into a single request (`RPUSH` + `LTRIM` + `EXPIRE`), and each key
+expires after `AI_MEMORY_TTL_DAYS` of silence (default 14) so abandoned
+conversations don't accumulate forever. It talks plain `fetch` to Upstash's REST
+API, so there is still no runtime dependency beyond Next.js.
+
+**In-memory (`Map<chatId, messages[]>`)** — the fallback, used when Redis isn't
+configured (typical for local development) *and* whenever a Redis call fails.
+Its limits are real:
 
 - **Vercel functions are ephemeral.** After a cold start the history is empty
   again, so the bot may forget earlier turns. Replies stay correct — it just
@@ -223,11 +246,25 @@ It is intentionally simple, and it has real limits you should know about:
 - Each warm instance has its own copy of the store.
 - Chats idle for 2 hours are evicted, and at most 500 chats are tracked.
 
-This is fine for a personal bot. For durable, shared memory, replace
-`lib/memory.ts` with Redis (**Upstash** has a free tier and a REST API that
-works from serverless with plain `fetch`). Keep the same three exported
-functions — `getHistory`, `appendTurn`, `clearHistory` — and nothing else in the
-app needs to change.
+### Memory failures never break a reply
+
+Memory is treated as an enhancement, not a correctness requirement. If Redis is
+unreachable, misconfigured, or returns a bad payload, the error is logged and the
+request continues on the in-memory store — the worst outcome is that she briefly
+forgets, never that she stops answering. `/reset` is the one case worth
+watching: it clears the in-memory copy first, then `DEL`s the Redis key, and logs
+loudly if that delete fails, because it has promised the user their history is
+gone.
+
+`/api/health` reports which backend is live:
+
+```json
+{ "config": { "memoryBackend": "redis", "maxHistory": 40 },
+  "memory":  { "chats": 5, "backend": "redis" } }
+```
+
+If `memoryBackend` says `memory` in production, the Redis variables are missing —
+set them in Vercel and redeploy.
 
 ---
 
@@ -251,6 +288,7 @@ scripts/
   test-ai.mjs             Direct AI API smoke test
   test-webhook.mjs        Full webhook round-trip
   test-memory.mjs         Multi-turn memory and /reset
+  test-durable-memory.mjs Memory survives a cold start (needs Redis)
 ```
 
 ## Troubleshooting
@@ -269,7 +307,10 @@ Vercel's Hobby plan caps function duration. `vercel.json` already requests 60 s
 for the webhook; lower `AI_MAX_TOKENS` if you routinely hit the limit.
 
 **Reply arrives but the bot forgets context.**
-Expected — see the memory section above.
+Check `/api/health` — if `config.memoryBackend` is `memory`, Redis is not
+configured or the variables were added without redeploying, so history lives
+only inside one serverless instance and dies at the next cold start. See the
+memory section above. Expected locally; not expected in production.
 
 **Everything returns `401 unauthorized` from `/api/telegram`.**
 `TELEGRAM_WEBHOOK_SECRET` changed after the webhook was registered. Re-run

@@ -80,7 +80,7 @@ async function handleCommand(
   }
 
   if (isCommand(text, '/reset')) {
-    clearHistory(chatId);
+    await clearHistory(chatId);
     await sendMessage(chatId, "Okay, clean slate — what's on your mind?");
     return true;
   }
@@ -119,14 +119,14 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
   await sendTyping(chatId);
 
   // Build the prompt from prior turns plus this new message.
-  const history = [...getHistory(chatId), { role: 'user' as const, content: text }];
+  const history = [...(await getHistory(chatId)), { role: 'user' as const, content: text }];
 
   try {
     const reply = await generateReply(history);
 
     // Store the full reply as one turn, so context stays coherent even though
     // the user sees it as several bubbles.
-    appendTurn(chatId, text, reply);
+    await appendTurn(chatId, text, reply);
 
     // Send it the way a person texts: separate short messages, paced out.
     const bubbles = splitIntoBubbles(reply);
@@ -205,6 +205,6 @@ export async function GET(): Promise<NextResponse> {
   return NextResponse.json({
     ok: true,
     message: 'Telegram webhook is live. Updates must be delivered via POST.',
-    memory: memoryStats(),
+    memory: await memoryStats(),
   });
 }

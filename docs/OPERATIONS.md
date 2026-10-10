@@ -80,6 +80,9 @@ Set in Vercel → Project Settings → Environment Variables. Real values live i
 | `AI_MODEL` | optional | Default `deepseek/deepseek-v4.1-flash`. |
 | `AI_BASE_URL` | optional | Default `https://api.aicredits.in/v1`. |
 | `AI_MAX_HISTORY` | optional | Remembered messages per chat. Default `40` (≈20 exchanges), clamped to `50`. |
+| `UPSTASH_REDIS_REST_URL` | recommended | Upstash Redis endpoint. Enables durable memory. |
+| `UPSTASH_REDIS_REST_TOKEN` | recommended | Upstash Redis token. Both this and the URL must be set. |
+| `AI_MEMORY_TTL_DAYS` | optional | Days of silence before a chat is forgotten. Default `14`. |
 | `AI_TEMPERATURE` | optional | Default `0.7`. |
 | `AI_MAX_TOKENS` | optional | Reply length cap. Default `1024`. |
 
@@ -98,6 +101,7 @@ Set in Vercel → Project Settings → Environment Variables. Real values live i
 | How many bubbles she can send | `MAX_BUBBLES` in [`lib/persona.ts`](../lib/persona.ts) (default 4) |
 | Pause length between bubbles | `bubbleDelayMs()` in [`lib/persona.ts`](../lib/persona.ts) |
 | How much she remembers | `AI_MAX_HISTORY` env var (default 40, max 50) |
+| How long memory lasts | `UPSTASH_REDIS_REST_URL` + `_TOKEN` (durable); `AI_MEMORY_TTL_DAYS` for expiry |
 | Markdown stripping rules | `stripMarkdown()` in [`lib/persona.ts`](../lib/persona.ts) |
 
 After changing anything, verify before pushing:
@@ -105,6 +109,7 @@ After changing anything, verify before pushing:
 ```bash
 node scripts/test-bubbles.mjs         # splitting logic + live conciseness
 node scripts/test-split-delivery.mjs  # bubbles arrive as separate messages
+node scripts/test-durable-memory.mjs  # memory survives a cold start (needs Redis)
 ```
 
 ---
@@ -140,17 +145,21 @@ unauthorized callers. Change `TELEGRAM_WEBHOOK_SECRET`, redeploy, then re-run
 | `401 unauthorized` on every update | `TELEGRAM_WEBHOOK_SECRET` changed without re-running `/api/setup`. |
 | `409 Conflict` | Another webhook or poller attached. `/api/setup` overwrites it. |
 | Replies are too long | Lower `PREFERRED_MAX` in `lib/persona.ts`. |
-| She forgets context | Expected after idle — see below. |
+| She forgets context | Check `/api/health` -> `config.memoryBackend`. `memory` means Redis is unset; see below. |
 
 ---
 
 ## Known limitations
 
-**Memory is not durable.** `lib/memory.ts` keeps conversation history in the
-server instance's memory. Vercel functions are ephemeral, so after a cold start
-she forgets earlier turns. Replies stay correct; she just loses context.
-Chats idle for 2 hours are evicted, and at most 500 chats are tracked. See the
-memory section of [README.md](../README.md) for how to make this durable.
+**Memory is durable only when Redis is configured.** With
+`UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` set, history lives in
+Redis and survives cold starts. Without them — or if Redis is unreachable —
+`lib/memory.ts` falls back to the server instance's memory, and Vercel functions
+are ephemeral, so after a cold start she forgets earlier turns. Replies stay
+correct either way; she just loses context. On the fallback path, chats idle for
+2 hours are evicted and at most 500 chats are tracked. Confirm which backend is
+live by checking `config.memoryBackend` on `/api/health`, and verify durability
+with `node scripts/test-durable-memory.mjs`.
 
 **Anyone who finds her spends your AICredits.** There is no allow-list. To add
 one, filter on `message.from?.id` in `handleMessage`

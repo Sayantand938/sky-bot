@@ -126,6 +126,40 @@ export function aiMaxTokens(): number {
   return Math.max(1, Math.floor(value));
 }
 
+/**
+ * Upstash Redis REST credentials, used for durable conversation memory.
+ *
+ * Both must be set for Redis to be used. When either is missing the app falls
+ * back to the in-memory store, so local development needs no Redis at all.
+ */
+export function redisUrl(): string | undefined {
+  const value = process.env.UPSTASH_REDIS_REST_URL?.trim();
+  return value && value.length > 0 ? value.replace(/\/+$/, '') : undefined;
+}
+
+export function redisToken(): string | undefined {
+  const value = process.env.UPSTASH_REDIS_REST_TOKEN?.trim();
+  return value && value.length > 0 ? value : undefined;
+}
+
+/** True when durable memory is configured. */
+export function redisConfigured(): boolean {
+  return Boolean(redisUrl() && redisToken());
+}
+
+/**
+ * How long a chat's history lives in Redis before it expires.
+ *
+ * This is a safety net, not a feature: without it, histories for every chat
+ * ever seen would accumulate forever and slowly fill the free tier. Two weeks
+ * of silence is a reasonable definition of "this conversation is over".
+ */
+export function memoryTtlSeconds(): number {
+  const value = optionalNumber('AI_MEMORY_TTL_DAYS', process.env.AI_MEMORY_TTL_DAYS, 14);
+  const days = Math.max(1, Math.min(365, value));
+  return Math.floor(days * 24 * 60 * 60);
+}
+
 /** Optional guard for the /api/setup route. */
 export function setupKey(): string | undefined {
   const value = process.env.SETUP_KEY?.trim();

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { maxHistory, redisConfigured } from '@/lib/config';
 import { memoryStats } from '@/lib/memory';
 
 /**
@@ -20,11 +21,19 @@ export async function GET(): Promise<NextResponse> {
     TELEGRAM_WEBHOOK_SECRET: present('TELEGRAM_WEBHOOK_SECRET'),
     AI_API: present('AI_API'),
     SETUP_KEY: present('SETUP_KEY'),
+    // Not required: without it the bot runs on in-memory history, which is
+    // fine locally but forgets everything on a cold start in production.
+    UPSTASH_REDIS_REST_URL: present('UPSTASH_REDIS_REST_URL'),
+    UPSTASH_REDIS_REST_TOKEN: present('UPSTASH_REDIS_REST_TOKEN'),
   };
 
   // The two values the bot cannot run without.
   const required = [checks.TELEGRAM_BOT_TOKEN, checks.AI_API];
   const ready = required.every(Boolean);
+
+  // Report the effective window, not a copy of the default, so this can never
+  // drift out of step with what the bot actually does.
+  const durable = redisConfigured();
 
   return NextResponse.json(
     {
@@ -34,11 +43,14 @@ export async function GET(): Promise<NextResponse> {
       config: {
         model: process.env.AI_MODEL?.trim() || 'deepseek/deepseek-v4.1-flash',
         baseUrl: process.env.AI_BASE_URL?.trim() || 'https://api.aicredits.in/v1',
-        maxHistory: process.env.AI_MAX_HISTORY?.trim() || '10',
+        maxHistory: maxHistory(),
+        memoryBackend: durable ? 'redis' : 'memory',
       },
-      memory: memoryStats(),
+      memory: await memoryStats(),
       hint: ready
-        ? 'Configuration looks good. Register the webhook by calling /api/setup.'
+        ? durable
+          ? 'Configuration looks good, and memory is durable (Redis). Register the webhook by calling /api/setup.'
+          : 'The bot works, but memory is in-process only: it forgets everything on a cold start. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN for durable memory.'
         : 'Set the missing variables in Vercel -> Project Settings -> Environment Variables, then redeploy.',
     },
     { status: ready ? 200 : 503 },
