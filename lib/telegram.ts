@@ -232,31 +232,6 @@ export function keepTyping(chatId: number): () => void {
 }
 
 /**
- * Edits a message that was already sent — used to correct a deliberate typo.
- *
- * Best-effort: a failed edit leaves the original text in place, which is a
- * harmless outcome, so this never throws.
- */
-export async function editMessageText(
-  chatId: number,
-  messageId: number,
-  text: string,
-): Promise<boolean> {
-  try {
-    await callTelegram('editMessageText', {
-      chat_id: chatId,
-      message_id: messageId,
-      text,
-      link_preview_options: { is_disabled: true },
-    });
-    return true;
-  } catch (error) {
-    console.error('[telegram] editMessageText failed:', error);
-    return false;
-  }
-}
-
-/**
  * Reacts to a message with an emoji instead of replying to it.
  *
  * Best-effort: reactions are a nicety, so a failure here is swallowed and the

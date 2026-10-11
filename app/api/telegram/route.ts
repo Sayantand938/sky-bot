@@ -3,7 +3,6 @@ import { AiError, generateReply } from '@/lib/ai';
 import {
   botName,
   debounceMs,
-  typoChance,
   webhookSecret,
 } from '@/lib/config';
 import {
@@ -16,9 +15,8 @@ import {
   queueBurstMessage,
 } from '@/lib/memory';
 import {
+  backchannelDelayMs,
   bubbleDelayMs,
-  correctionDelayMs,
-  introduceTypo,
   pickBackchannel,
   pickReaction,
   readDelayMs,
@@ -26,7 +24,6 @@ import {
   splitIntoBubbles,
 } from '@/lib/persona';
 import {
-  editMessageText,
   keepTyping,
   sendBubbles,
   sendMessage,
@@ -213,8 +210,16 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
 
   // Debounce: in a burst of quick messages, only the first one answers. The
   // others are queued so the eventual reply still sees everything you said.
+  //
+  // The claim must outlive the wait below, or it expires mid-wait and a message
+  // arriving in that gap claims a fresh slot and answers a second time — the
+  // duplicate-reply bug. The claim is therefore extended past the whole window
+  // plus the burst wait, with margin for the round trips in between.
   const windowMs = debounceMs();
-  const shouldReply = await claimReplySlot(chatId, windowMs);
+  const burstWaitMs = Math.min(windowMs, BURST_WAIT_MS);
+  const claimMs = windowMs + burstWaitMs + 2_000;
+
+  const shouldReply = await claimReplySlot(chatId, claimMs);
 
   if (!shouldReply) {
     await queueBurstMessage(chatId, text);
@@ -223,7 +228,7 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
 
   // Let the rest of the burst arrive before composing, so a three-message
   // thought gets one answer that responds to all of it rather than to "hey".
-  if (windowMs > 0) await budget.spend(Math.min(windowMs, BURST_WAIT_MS));
+  if (windowMs > 0) await budget.spend(burstWaitMs);
   const burst = await drainBurstMessages(chatId);
 
   // A short pause first: she noticed the message before she started composing.
@@ -272,7 +277,7 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
       const backchannel = pickBackchannel(reply);
       if (backchannel) {
         await sendMessage(chatId, backchannel, { replyToMessageId: message.message_id });
-        await sleep(correctionDelayMs());
+        await sleep(backchannelDelayMs());
         await sendBubbles(chatId, bubbles, { delayMs: bubbleDelayMs });
       } else {
         await sendBubbles(chatId, bubbles, {
@@ -280,10 +285,16 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
           delayMs: bubbleDelayMs,
         });
       }
+    }
 
-      // Occasionally send the first bubble with a typo, then fix it — the way a
-      // real person notices their own slip a second later.
-      await maybeCorrectTypo(chatId, bubbles[0], message.message_id);
+    // Anything sent WHILE she was composing was queued by the suppressed
+    // handlers. Answer it now, referencing the fact they added something, so the
+    // user gets a natural follow-up instead of a second answer to the same
+    // question. This is the last step, so the burst queue is drained exactly
+    // once per reply.
+    const lateArrivals = await drainBurstMessages(chatId);
+    if (lateArrivals.length > 0) {
+      await answerLateArrivals(chatId, lateArrivals, message.message_id);
     }
   } catch (error) {
     stopTyping();
@@ -303,31 +314,34 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
 }
 
 /**
- * Sends a bubble with a deliberate typo, waits, then edits it to the correct
- * text — the "teh -> *the" behaviour.
+ * Answers messages that arrived while the previous reply was being composed.
  *
- * The mistaken version is sent as a real message first so the correction is
- * visible as an edit by the time anyone reads it. If the edit fails, the typo
- * stays on screen, so this only runs when the corrected text is known to be
- * sendable.
+ * These were queued by handlers that lost the reply-slot claim, so nobody has
+ * answered them yet. Crucially they are answered as a FOLLOW-UP — the earlier
+ * turn is already in history, so the model sees the new text as an addition
+ * rather than a repeat of what it just replied to. Without this the same
+ * question could be answered twice, which is the bug this exists to prevent.
  */
-async function maybeCorrectTypo(
+async function answerLateArrivals(
   chatId: number,
-  bubble: string,
+  arrivals: string[],
   replyToMessageId: number,
 ): Promise<void> {
-  if (Math.random() >= typoChance()) return;
-
-  const typo = introduceTypo(bubble);
-  if (!typo) return;
+  const text = arrivals.join('\n');
 
   try {
-    const messageId = await sendMessage(chatId, typo, { replyToMessageId });
-    await sleep(correctionDelayMs());
-    await editMessageText(chatId, messageId, bubble);
+    const history = [...(await getHistory(chatId)), { role: 'user' as const, content: text }];
+    const reply = await generateReply(history);
+    await appendTurn(chatId, text, reply);
+
+    const bubbles = splitIntoBubbles(reply);
+    if (bubbles.length > 0) {
+      await sendBubbles(chatId, bubbles, { replyToMessageId, delayMs: bubbleDelayMs });
+    }
   } catch (error) {
-    // A failed typo gag is not worth surfacing to the user.
-    console.error('[telegram] typo-correction skipped:', error);
+    // The user has already had one answer; a failed follow-up is not worth an
+    // error notice on top of it.
+    console.error('[telegram] could not answer a message sent mid-reply:', error);
   }
 }
 

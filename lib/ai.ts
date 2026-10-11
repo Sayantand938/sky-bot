@@ -4,6 +4,8 @@ import {
   aiMaxTokens,
   aiModel,
   aiTemperature,
+  bubbleHintLine,
+  splitHintChance,
   systemPrompt,
 } from './config';
 import type { ChatMessage } from './memory';
@@ -165,9 +167,25 @@ async function requestOnce(messages: ApiMessage[]): Promise<string> {
  *
  * Throws AiError with a message that is safe to show the Telegram user.
  */
+/**
+ * Builds the system message for one reply: her persona, plus — at random —
+ * one extra line asking her to mark her own message breaks.
+ *
+ * Bubbles are our business, not hers. The splitter in lib/persona.ts turns any
+ * reply into separate messages whether or not she marked breaks; the hint just
+ * gives the splitter her own paragraphing to work with, which reads more
+ * natural than sentence-boundary splitting. Random so her replies do not all
+ * carry the same formatting instruction.
+ */
+function systemMessage(): ApiMessage {
+  const base = systemPrompt();
+  const hint = Math.random() < splitHintChance() ? bubbleHintLine() : null;
+  return { role: 'system', content: hint ? `${base}\n\n${hint}` : base };
+}
+
 export async function generateReply(history: ChatMessage[]): Promise<string> {
   const messages: ApiMessage[] = [
-    { role: 'system', content: systemPrompt() },
+    systemMessage(),
     ...history.map((m) => ({ role: m.role, content: m.content })),
   ];
 

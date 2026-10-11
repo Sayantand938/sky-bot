@@ -118,18 +118,10 @@ const out = {};
 }
 
 {
-  const text = 'I think that was pretty fun honestly';
-  const typo = persona.introduceTypo(text, seq([0.5, 0.1]));
-  out.typoText = typo;
-  out.typoIsDifferent = typo !== null && typo !== text;
-  out.typoWordCountSame = typo !== null && typo.split(/\\s+/).length === text.split(/\\s+/).length;
-  out.typoCharsPreserved =
-    typo !== null &&
-    [...typo.replace(/\\s/g, '')].sort().join('') === [...text.replace(/\\s/g, '')].sort().join('');
-  out.typoShortText = persona.introduceTypo('hi there', seq([0.5]));
-  out.typoOneWord = persona.introduceTypo('hello', seq([0.5]));
-  out.typoFirstWordUntouched =
-    typo !== null && typo.split(/\\s+/)[0] === text.split(/\\s+/)[0];
+  out.splitHintChance = config.splitHintChance();
+  out.hintLine = config.bubbleHintLine();
+  out.hintBrevity = /blank line/i.test(out.hintLine);
+  out.hintCap = /at most 2 or 3/i.test(out.hintLine);
 }
 
 {
@@ -144,13 +136,12 @@ const out = {};
 }
 
 {
-  out.correctionMin = persona.correctionDelayMs(() => 0);
-  out.correctionMax = persona.correctionDelayMs(() => 1);
+  out.backchannelMin = persona.backchannelDelayMs(() => 0);
+  out.backchannelMax = persona.backchannelDelayMs(() => 1);
 }
 
 {
   out.debounceMs = config.debounceMs();
-  out.typoChance = config.typoChance();
   out.reactionChance = config.reactionChance();
   out.busyChance = config.busyChance();
   out.maxHistory = config.maxHistory();
@@ -185,13 +176,10 @@ check('reply jitter is not a constant', out.jitterDistinct > 20, `distinct=${out
 check('reply jitter is never negative', out.jitterNeverNegative);
 check('reply jitter respects the budget cap', out.jitterCap <= 5000, `got=${out.jitterCap}`);
 
-console.log('\ntypo correction (Tier B)');
-check('a typo is actually introduced', out.typoIsDifferent, `got=${JSON.stringify(out.typoText)}`);
-check('word count is unchanged', out.typoWordCountSame);
-check('the typo is a transposition, not a new word', out.typoCharsPreserved);
-check('the first word is left alone', out.typoFirstWordUntouched);
-check('no typo for a very short message', out.typoShortText === null);
-check('no typo when there is no inner word', out.typoOneWord === null);
+console.log('\nsplit hint (Tier B)');
+check('split hint chance is sane', out.splitHintChance >= 0 && out.splitHintChance <= 1, `got=${out.splitHintChance}`);
+check('hint asks for blank-line breaks', out.hintBrevity, `got=${JSON.stringify(out.hintLine)}`);
+check('hint caps the bubble count', out.hintCap);
 
 console.log('\nreactions (Tier B)');
 check('a short statement can get a reaction', typeof out.reactShort === 'string');
@@ -202,13 +190,12 @@ console.log('\nback-channel (Tier B)');
 check('a long reply may get a back-channel', typeof out.backLong === 'string');
 check('a short reply never gets one', out.backShort === null);
 
-console.log('\ncorrection timing (Tier B)');
-check('correction is not instant', out.correctionMin >= 1000, `min=${out.correctionMin}`);
-check('correction is not glacial', out.correctionMax <= 4000, `max=${out.correctionMax}`);
+console.log('\nback-channel stall (Tier B)');
+check('stall is not instant', out.backchannelMin >= 1000, `min=${out.backchannelMin}`);
+check('stall is not glacial', out.backchannelMax <= 4000, `max=${out.backchannelMax}`);
 
 console.log('\nconfig plumbing');
 check('debounce window is enabled by default', out.debounceMs > 0, `got=${out.debounceMs}`);
-check('typo chance is rare and sane', out.typoChance > 0 && out.typoChance <= 0.5, `got=${out.typoChance}`);
 check('reaction chance is sane', out.reactionChance > 0 && out.reactionChance <= 0.5, `got=${out.reactionChance}`);
 check('busy chance is sane', out.busyChance >= 0 && out.busyChance <= 1, `got=${out.busyChance}`);
 check('memory window is still 40', out.maxHistory === 40, `got=${out.maxHistory}`);

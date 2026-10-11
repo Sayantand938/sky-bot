@@ -84,7 +84,7 @@ Set in Vercel → Project Settings → Environment Variables. Real values live i
 | `AI_REPLY_JITTER_MIN_MS` / `_MAX_MS` | optional | Random extra pause before replying. Defaults `300` / `3200`. |
 | `AI_BUSY_CHANCE` | optional | Chance she was busy and pauses longer. Default `0.12`. |
 | `AI_BUSY_DELAY_MIN_MS` / `_MAX_MS` | optional | Length of that pause. Defaults `6000` / `18000`. |
-| `AI_TYPO_CHANCE` | optional | Chance of a typo-then-correction. Default `0.08`. |
+| `AI_SPLIT_HINT_CHANCE` | optional | Chance one extra line asks her to mark her own message breaks. Default `0.5`. |
 | `AI_REACTION_CHANCE` | optional | Chance of an emoji reaction instead of words. Default `0.1`. |
 | `AI_DEBOUNCE_MS` | optional | Messages within this window are one thought. Default `2500`, `0` disables. |
 | `AI_TIMEOUT_MS` | optional | Model request timeout. Default `40000`. |
@@ -94,9 +94,9 @@ Set in Vercel → Project Settings → Environment Variables. Real values live i
 | `AI_TEMPERATURE` | optional | Default `0.7`. |
 | `AI_MAX_TOKENS` | optional | Reply length cap. Default `1024`. |
 
-> **`AI_SYSTEM_PROMPT` is a trap.** Setting it silently disables her persona
-> *and* the brevity and bubble-splitting instructions. If she suddenly sounds
-> generic, check this first.
+> **`AI_SYSTEM_PROMPT` is a trap.** Setting it silently replaces her persona
+> *and* her brevity rules — only the occasional split hint is still appended on
+> top. If she suddenly sounds generic, check this first.
 
 ---
 
@@ -111,7 +111,7 @@ Set in Vercel → Project Settings → Environment Variables. Real values live i
 | How much she remembers | `AI_MAX_HISTORY` env var (default 40, max 50) |
 | How long memory lasts | `UPSTASH_REDIS_REST_URL` + `_TOKEN` (durable); `AI_MEMORY_TTL_DAYS` for expiry |
 | How human her timing feels | `AI_READ_DELAY_*`, `AI_REPLY_JITTER_*`, `AI_BUSY_*` env vars |
-| How often she makes a typo | `AI_TYPO_CHANCE` (default 0.08) |
+| How often she's asked to mark her own breaks | `AI_SPLIT_HINT_CHANCE` (default 0.5) |
 | How often she reacts with an emoji | `AI_REACTION_CHANCE` (default 0.1) |
 | Merging a burst into one reply | `AI_DEBOUNCE_MS` (default 2500, 0 disables) |
 | Markdown stripping rules | `stripMarkdown()` in [`lib/persona.ts`](../lib/persona.ts) |

@@ -184,7 +184,7 @@ if (!apiKey) {
      '--target', 'es2022', '--moduleResolution', 'bundler', '--skipLibCheck'],
     { encoding: 'utf8' },
   );
-  const { systemPrompt } = await import(
+  const { systemPrompt, bubbleHintLine, splitHintChance } = await import(
     `file://${resolve(cfgTmp, 'config.js').replace(/\\/g, '/')}`
   );
 
@@ -207,7 +207,15 @@ if (!apiKey) {
       body: JSON.stringify({
         model,
         messages: [
-          { role: 'system', content: systemPrompt() },
+          // Mirror lib/ai.ts: the split hint is appended at random, so these
+          // probes exercise both the hinted and the unhinted path.
+          {
+            role: 'system',
+            content:
+              Math.random() < splitHintChance()
+                ? `${systemPrompt()}\n\n${bubbleHintLine()}`
+                : systemPrompt(),
+          },
           { role: 'user', content: p },
         ],
         temperature: 0.8,

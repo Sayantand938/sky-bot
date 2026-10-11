@@ -53,7 +53,6 @@ const SECRET = 'debounce-test-secret';
 const CHAT_ID = 515_000 + Math.floor(Math.random() * 9_000);
 
 const replies = [];
-const edits = [];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Timestamp of the most recent outbound message, for settle detection. */
@@ -74,10 +73,6 @@ const fakeTelegram = createServer((req, res) => {
     if (method === 'sendMessage' && payload.text) {
       replies.push(payload.text);
       lastReplyAt = Date.now();
-    }
-    // An edit is the typo-correction feature, not a second reply.
-    if (method === 'editMessageText' && payload.text) {
-      edits.push(payload.text);
     }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, result: { message_id: replies.length + 1, date: Date.now() } }));
@@ -209,31 +204,9 @@ try {
 
   const answered = replies.length > 0;
 
-  /**
-   * Collapses typo-correction pairs into single logical bubbles.
-   *
-   * A correction sends the bubble with a typo, then edits that same message to
-   * the correct text — so one bubble appears as two sendMessage calls. The pair
-   * is identified by anagrams: a transposition preserves the character
-   * multiset, so sorted characters match even though the strings differ.
-   */
-  const anagramKey = (s) => [...s.toLowerCase().replace(/\s+/g, '')].sort().join('');
-
-  const editKeys = new Map();
-  for (const text of edits) {
-    const k = anagramKey(text);
-    editKeys.set(k, (editKeys.get(k) ?? 0) + 1);
-  }
-
-  const bubbles = [];
-  for (const text of replies) {
-    const k = anagramKey(text);
-    if ((editKeys.get(k) ?? 0) > 0) {
-      editKeys.set(k, editKeys.get(k) - 1);
-      continue;
-    }
-    bubbles.push(text.trim());
-  }
+  // One answer, one reply text per bubble — with the typo gag gone there is
+  // nothing to collapse, so every sendMessage is one logical bubble.
+  const bubbles = replies.map((t) => t.trim());
 
   /**
    * The debounce check: did THREE messages produce ONE answer?
@@ -258,9 +231,6 @@ try {
 
   console.log(`burst produced one answer:         ${looksLikeOneAnswer ? '✔ yes' : `✖ no (${bubbles.length} bubbles)`}`);
   console.log(`  (${bubbles.length} bubble${bubbles.length === 1 ? '' : 's'} in that answer)`);
-  if (edits.length > 0) {
-    console.log(`typo-correction observed:          ✔ yes (${edits.length} edit)`);
-  }
   console.log(`reply engages the last message:    ${engages ? '✔ yes' : '✖ not clearly'}`);
 
   // The bot can legitimately answer the burst without using any word this test

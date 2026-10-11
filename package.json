@@ -14,8 +14,9 @@
     "test:durable": "node scripts/test-durable-memory.mjs",
     "test:human": "node scripts/test-human.mjs",
     "test:bubbles": "node scripts/test-bubbles.mjs",
+    "test:duplicate": "node scripts/test-duplicate-reply.mjs",
     "test:delivery": "node scripts/test-split-delivery.mjs",
-    "test": "node scripts/test-bubbles.mjs && node scripts/test-human.mjs && node scripts/test-memory.mjs && node scripts/test-durable-memory.mjs"
+    "test": "node scripts/test-bubbles.mjs && node scripts/test-human.mjs && node scripts/test-memory.mjs && node scripts/test-durable-memory.mjs && node scripts/test-debounce.mjs && node scripts/test-duplicate-reply.mjs"
   },
   "pnpm": {
     "nodeLinker": "hoisted"

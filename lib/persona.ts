@@ -271,58 +271,6 @@ export function replyDelayMs(
 }
 
 // ---------------------------------------------------------------------------
-// Typos and corrections
-// ---------------------------------------------------------------------------
-
-/**
- * Introduces a plausible typo into a bubble.
- *
- * Deliberately conservative: only adjacent-character transpositions and one
- * doubled letter. Those are what real thumbs produce, and they stay readable, so
- * the correction reads as a person fixing a slip rather than as a broken bot.
- *
- * Returns null when no safe typo site exists — callers must handle that rather
- * than assume a typo was made.
- */
-export function introduceTypo(bubble: string, random: Random = realRandom): string | null {
-  // Only meaningful on a bubble with enough words to hide the slip in.
-  const words = bubble.split(/\s+/);
-  if (words.length < 3) return null;
-
-  // Never touch the first word or the last: it hides the typo mid-sentence,
-  // which is where real slips happen.
-  const candidates: number[] = [];
-  for (let i = 1; i < words.length - 1; i += 1) {
-    if (words[i].length >= 4 && /^[A-Za-z]+$/.test(words[i])) candidates.push(i);
-  }
-  if (candidates.length === 0) return null;
-
-  const index = candidates[Math.floor(random() * candidates.length)];
-  const word = words[index];
-
-  // Transpose two adjacent inner characters: "because" -> "becuase".
-  const at = 1 + Math.floor(random() * (word.length - 2));
-  const swapped = word.slice(0, at) + word[at + 1] + word[at] + word.slice(at + 2);
-
-  // A transposition that happens to be identical (double letters) is not a typo.
-  if (swapped === word) return null;
-
-  const next = [...words];
-  next[index] = swapped;
-  return next.join(' ');
-}
-
-/**
- * How long after sending a mistaken bubble the correction arrives.
- *
- * A person notices almost immediately, so this is short — but not instant, or
- * the edit lands before the first message has been read and nobody sees it.
- */
-export function correctionDelayMs(random: Random = realRandom): number {
-  return between(1200, 3600, random);
-}
-
-// ---------------------------------------------------------------------------
 // Reactions
 // ---------------------------------------------------------------------------
 
@@ -370,4 +318,15 @@ export function pickBackchannel(
   if (reply.length < 120) return null;
   if (random() >= 0.18) return null;
   return BACKCHANNELS[Math.floor(random() * BACKCHANNELS.length)];
+}
+
+/**
+ * How long the stall lasts between a back-channel bubble and the real answer.
+ *
+ * A person sends "hmm" while still putting their thoughts together, so the
+ * answer follows a moment later — but not instantly, or the stall reads as
+ * decoration rather than thinking.
+ */
+export function backchannelDelayMs(random: Random = realRandom): number {
+  return between(1200, 3600, random);
 }

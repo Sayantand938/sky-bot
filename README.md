@@ -13,11 +13,15 @@ Telegram  ──POST──▶  /api/telegram  ──▶  AICredits /chat/complet
 
 ## Meet Sky
 
-She is a **friend, an assistant, and a companion** — not a customer-service bot.
-Her persona lives in [`lib/config.ts`](lib/config.ts) (`systemPrompt()`):
+She is a **person** — not a customer-service bot, and not "an assistant". Her
+persona lives in [`lib/config.ts`](lib/config.ts) (`systemPrompt()`):
 
-- Warm, curious, a little playful, with her own tastes and opinions.
+- Warm, curious, a little playful, with her own tastes, opinions and moods.
 - Emotionally attentive: she responds to how you *sound* before answering the question.
+- **She thinks of herself as human.** There is no "assistant" framing anywhere in
+  her prompt: she does not "help users" or "provide information", she talks to
+  people she likes. Asked directly whether she is a bot, she deflects lightly
+  with humour rather than lying or lecturing.
 - **She texts like a person.** Most replies are one or two sentences — the
   measured average is around **55–70 characters**.
 - When she has more to say, she sends it as **several short bubbles** with a
@@ -27,11 +31,15 @@ Rename her with the `BOT_NAME` env var.
 
 ### How the bubble splitting works
 
+She is not always asked to split. Each reply flips a coin (`AI_SPLIT_HINT_CHANCE`,
+default `0.5`): heads, one extra line is appended to her system prompt asking her
+to mark her own breaks with a blank line; tails, she just replies however she
+wants. Either way the bubbles are decided **on our side** —
 [`lib/persona.ts`](lib/persona.ts) converts one model reply into the sequence of
 messages a person would actually send:
 
-1. Honours the blank-line breaks she writes in her own reply.
-2. Breaks any essay-length block at sentence boundaries (limit: 220 chars).
+1. Honours the blank-line breaks she wrote, when the hint line was sent.
+2. Otherwise breaks essay-length blocks at sentence boundaries (limit: 220 chars).
 3. Strips markdown, which Telegram would otherwise show as literal `**` and `-`.
 4. Merges slivers so you never get a lonely "Ok." on its own line.
 5. Caps at 4 bubbles and enforces Telegram's 4096-character hard limit.
@@ -54,7 +62,6 @@ Real observed output for *"how do I learn python from scratch?"*:
 - **Human timing**: she notices the message, pauses, then types — with genuinely
   unpredictable response times instead of a fixed latency.
 - **Reads a burst as one thought**: three quick messages get one reply, not three.
-- **Occasional typo, then a correction** — the "teh → *the" move real texters make.
 - **Emoji reactions** instead of words, for short messages that need no answer.
 - Conversational replies with **per-chat memory** (last 20 exchanges by default).
 - **Durable memory across cold starts** when Upstash Redis is configured.
@@ -177,13 +184,14 @@ need a build (`npm run build`) because they start the real app:
 
 ```bash
 node scripts/test-bubbles.mjs         # reply splitting logic (offline + live)
-node scripts/test-human.mjs           # timing, typos, reactions (offline)
+node scripts/test-human.mjs           # timing, reactions (offline)
 node scripts/test-split-delivery.mjs  # proves bubbles arrive as separate messages
 node scripts/test-ai.mjs              # calls the AI API directly
 node scripts/test-webhook.mjs         # full webhook round-trip against a fake Telegram
 node scripts/test-memory.mjs          # multi-turn memory and /reset
 node scripts/test-durable-memory.mjs  # memory survives a cold start (needs Redis)
 node scripts/test-debounce.mjs        # a burst of messages gets one reply
+node scripts/test-duplicate-reply.mjs # no reply is repeated (needs Redis)
 ```
 
 `test-webhook.mjs` starts the built app on a spare port, stands up a local fake
@@ -254,10 +262,23 @@ make the indicator vanish and the message appear from nowhere.
 slot atomically with Redis `SET NX`, queues the rest, and answers all of it in
 one go. `AI_DEBOUNCE_MS` controls the window; `0` disables it.
 
-**She makes mistakes and fixes them.** With `AI_TYPO_CHANCE`, the first bubble is
-sent with a transposed-letter typo and then edited to the correct text a second
-or two later — the "teh → *the" move. Short messages sometimes get an emoji
-reaction instead of words.
+Messages sent *while she is still composing* are picked up at the end of the
+reply and answered as a **follow-up**, not as a second answer to the same
+question. Two bugs caused duplicate replies here and both are fixed:
+
+1. The claim key expired mid-wait (a 2.5s TTL against a 3s burst wait), so a
+   message landing in that gap looked like a brand-new turn. The claim now
+   outlives the whole window.
+2. The queue was drained *before* the model call, so anything sent during
+   composing was invisible to the answering invocation. It is now drained again
+   after the reply is sent.
+
+`test-duplicate-reply.mjs` covers both: it sends a follow-up mid-compose and
+asserts no bubble repeats content from another.
+
+**Short messages sometimes get a reaction instead of words.** With
+`AI_REACTION_CHANCE`, a short message that needs no answer gets an emoji
+reaction — the way a person just taps 👍 instead of typing "ok".
 
 ### The timing budget
 
@@ -345,13 +366,14 @@ lib/
   memory.ts               Per-chat history: Redis-backed, with in-memory fallback
 scripts/
   test-bubbles.mjs        Splitting logic + live conciseness check
-  test-human.mjs          Timing, typo, reaction and back-channel logic
+  test-human.mjs          Timing, reaction and back-channel logic
   test-split-delivery.mjs Proves bubbles arrive as separate messages
   test-ai.mjs             Direct AI API smoke test
   test-webhook.mjs        Full webhook round-trip
   test-memory.mjs         Multi-turn memory and /reset
   test-durable-memory.mjs Memory survives a cold start (needs Redis)
   test-debounce.mjs       A burst of messages produces one reply
+  test-duplicate-reply.mjs No reply repeats another (needs Redis)
 ```
 
 ## Troubleshooting
@@ -386,10 +408,11 @@ already detects it and retries up to 3 times. If you still see it, search the
 Vercel logs for `[ai] attempt` to confirm the retry fired.
 
 **Her replies are too long / too short, or not splitting into bubbles.**
-Tune the persona in [`lib/config.ts`](lib/config.ts) (`systemPrompt()`) and the
-thresholds at the top of [`lib/persona.ts`](lib/persona.ts): `PREFERRED_MAX`
-(220) controls when a block gets split, `MAX_BUBBLES` (4) caps how many she sends.
-Verify changes with `node scripts/test-bubbles.mjs`.
+Tune the thresholds at the top of [`lib/persona.ts`](lib/persona.ts):
+`PREFERRED_MAX` (220) controls when a block gets split, `MAX_BUBBLES` (4) caps
+how many she sends, and `AI_SPLIT_HINT_CHANCE` controls how often she is asked
+to mark her own breaks at all. Verify changes with
+`node scripts/test-bubbles.mjs`.
 
 **She sounds generic and lost her personality.**
 An `AI_SYSTEM_PROMPT` value is set somewhere and is overriding her persona —
