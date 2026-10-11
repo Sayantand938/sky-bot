@@ -73,6 +73,23 @@ const HUMAN_PAUSE_BUDGET_MS = 10_000;
  */
 const BURST_WAIT_MS = 3_000;
 
+/**
+ * Ceiling on the total time the follow-up loop may spend waiting out the
+ * debounce claim's remaining tail, in milliseconds.
+ *
+ * A message that lands while the claim is still alive is queued for THIS
+ * reply rather than starting a turn of its own — so a reply that finishes
+ * before the claim expires must give queued stragglers a moment to arrive,
+ * or they would sit unloved until the user's next message.
+ */
+const FOLLOW_UP_TAIL_WAIT_MS = 3_000;
+
+/**
+ * Upper bound on follow-up answers per reply. A steady stream of messages
+ * must not keep the invocation answering — and alive — forever.
+ */
+const MAX_FOLLOW_UP_ROUNDS = 3;
+
 /** Pauses without blocking the event loop. */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -112,6 +129,9 @@ function createPauseBudget(totalMs: number) {
     },
   };
 }
+
+/** The shared pause-budget object passed between the reply stages. */
+type PauseBudget = ReturnType<typeof createPauseBudget>;
 
 function helpText(): string {
   return [
@@ -234,6 +254,11 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
     return;
   }
 
+  // When this reply's debounce claim expires. The follow-up loop waits out
+  // whatever remains of it: that tail is exactly the window in which an
+  // arriving message is queued for this reply instead of starting its own.
+  const claimedAt = Date.now();
+
   // Let the rest of the burst arrive before composing, so a three-message
   // thought gets one answer that responds to all of it rather than to "hey".
   if (windowMs > 0) await budget.spend(burstWaitMs);
@@ -268,6 +293,10 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
     // Sometimes a short message just gets a reaction rather than words.
     const reaction = pickReaction(text);
     if (reaction && (await setMessageReaction(chatId, message.message_id, reaction))) {
+      stopTyping();
+      // No words were sent, but anything queued mid-compose still deserves an
+      // answer — the reaction exit must not orphan it.
+      await answerQueuedFollowUps(chatId, message.message_id, budget, claimedAt, claimMs);
       return;
     }
 
@@ -296,14 +325,8 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
     }
 
     // Anything sent WHILE she was composing was queued by the suppressed
-    // handlers. Answer it now, referencing the fact they added something, so the
-    // user gets a natural follow-up instead of a second answer to the same
-    // question. This is the last step, so the burst queue is drained exactly
-    // once per reply.
-    const lateArrivals = await drainBurstMessages(chatId);
-    if (lateArrivals.length > 0) {
-      await answerLateArrivals(chatId, lateArrivals, message.message_id);
-    }
+    // handlers; answer it as a follow-up, in bounded rounds.
+    await answerQueuedFollowUps(chatId, message.message_id, budget, claimedAt, claimMs);
   } catch (error) {
     stopTyping();
     const isAiError = error instanceof AiError;
@@ -322,6 +345,52 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
 }
 
 /**
+ * Answers everything that piled up in the burst queue during a reply, in
+ * bounded rounds.
+ *
+ * The queue is written by handlers that lost the reply-slot claim, so nobody
+ * else is going to answer these. Draining once is not enough: a message that
+ * arrives while a follow-up is ITSELF being composed lands in the queue after
+ * the single post-reply drain this flow used to do, and then sat unloved
+ * until the user's next message folded it into a fresh turn. So after every
+ * answer the queue is checked again, and when a check comes up empty the
+ * loop waits out whatever remains of the debounce claim's tail before giving
+ * up — that window is precisely when arriving messages are still being queued
+ * for THIS reply rather than starting turns of their own.
+ *
+ * Two bounds keep this safe: at most MAX_FOLLOW_UP_ROUNDS answers (each is a
+ * model call), and at most FOLLOW_UP_TAIL_WAIT_MS of tail-waiting in total,
+ * drawn from the shared pause budget. Anything still queued after the last
+ * round folds into the user's next turn, as before.
+ */
+async function answerQueuedFollowUps(
+  chatId: number,
+  replyToMessageId: number,
+  budget: PauseBudget,
+  claimedAt: number,
+  claimMs: number,
+): Promise<void> {
+  let followUpsLeft = MAX_FOLLOW_UP_ROUNDS;
+  let tailWaitLeft = FOLLOW_UP_TAIL_WAIT_MS;
+
+  while (followUpsLeft > 0) {
+    // Drain only while an answer is guaranteed to follow — a drain without an
+    // answer would delete the message instead of deferring it.
+    const lateArrivals = await drainBurstMessages(chatId);
+    if (lateArrivals.length === 0) {
+      const claimLeftMs = claimedAt + claimMs - Date.now();
+      if (claimLeftMs <= 0 || tailWaitLeft <= 0) break;
+      const spent = await budget.spend(Math.min(claimLeftMs, tailWaitLeft));
+      if (spent <= 0) break; // pause budget exhausted — nothing left to wait with
+      tailWaitLeft -= spent;
+      continue;
+    }
+    followUpsLeft -= 1;
+    await answerLateArrivals(chatId, lateArrivals, replyToMessageId);
+  }
+}
+
+/**
  * Answers messages that arrived while the previous reply was being composed.
  *
  * These were queued by handlers that lost the reply-slot claim, so nobody has
@@ -329,6 +398,9 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
  * turn is already in history, so the model sees the new text as an addition
  * rather than a repeat of what it just replied to. Without this the same
  * question could be answered twice, which is the bug this exists to prevent.
+ *
+ * Called in bounded rounds by answerQueuedFollowUps, so messages that arrive
+ * while a follow-up is itself being composed are answered too.
  */
 async function answerLateArrivals(
   chatId: number,

@@ -267,7 +267,7 @@ one go. `AI_DEBOUNCE_MS` controls the window; `0` disables it.
 
 Messages sent *while she is still composing* are picked up at the end of the
 reply and answered as a **follow-up**, not as a second answer to the same
-question. Two bugs caused duplicate replies here and both are fixed:
+question. Three bugs lived here and all are fixed:
 
 1. The claim key expired mid-wait (a 2.5s TTL against a 3s burst wait), so a
    message landing in that gap looked like a brand-new turn. The claim now
@@ -275,9 +275,14 @@ question. Two bugs caused duplicate replies here and both are fixed:
 2. The queue was drained *before* the model call, so anything sent during
    composing was invisible to the answering invocation. It is now drained again
    after the reply is sent.
+3. A message arriving while a *follow-up* was itself being composed landed in
+   the queue after the single post-reply drain, so it sat unloved until the
+   user's next message. Follow-ups now run in bounded rounds — the queue is
+   re-checked after every answer, and the loop waits out the debounce claim's
+   remaining tail (up to 3s, from the shared pause budget) before giving up.
 
-`test-duplicate-reply.mjs` covers both: it sends a follow-up mid-compose and
-asserts no bubble repeats content from another.
+`test-duplicate-reply.mjs` covers the mid-compose case: it sends a follow-up
+while she is composing and asserts no bubble repeats content from another.
 
 **Short messages sometimes get a reaction instead of words.** With
 `AI_REACTION_CHANCE`, a short message that needs no answer gets an emoji
