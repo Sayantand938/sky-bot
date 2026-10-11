@@ -75,6 +75,7 @@ Set in Vercel → Project Settings → Environment Variables. Real values live i
 | `AI_API` | ✅ | AICredits key. |
 | `TELEGRAM_WEBHOOK_SECRET` | ✅ | Proves the caller is Telegram. |
 | `SETUP_KEY` | optional | Locks `/api/setup`. |
+| `ALLOWED_CHAT_IDS` | optional | Comma-separated chat IDs allowed to chat. Unset = everyone; garbage = no one (fails closed). |
 | `BOT_NAME` | optional | Her name. Default `Sky`. |
 | `AI_SYSTEM_PROMPT` | ⚠️ | **Replaces her entire personality.** Leave unset. |
 | `AI_MODEL` | optional | Default `deepseek/deepseek-v4.1-flash`. |
@@ -128,7 +129,7 @@ node scripts/test-durable-memory.mjs  # memory survives a cold start (needs Redi
 
 ## Rotating secrets
 
-**If the bot token leaks** (e.g. you shared `BOT DETAILS.md`):
+**If the bot token leaks:**
 
 1. Message [@BotFather](https://t.me/BotFather) → `/revoke` → pick the bot.
 2. Update `TELEGRAM_BOT_TOKEN` in Vercel and in `.env.local`.
@@ -173,10 +174,10 @@ correct either way; she just loses context. On the fallback path, chats idle for
 live by checking `config.memoryBackend` on `/api/health`, and verify durability
 with `node scripts/test-durable-memory.mjs`.
 
-**Anyone who finds her spends your AICredits.** There is no allow-list. To add
-one, filter on `message.from?.id` in `handleMessage`
-([`app/api/telegram/route.ts`](../app/api/telegram/route.ts)); get your ID via
-`/whoami`.
+**Without `ALLOWED_CHAT_IDS`, anyone who finds her spends your AICredits.**
+Set it to your chat ID (get yours via `/whoami`) in Vercel and redeploy to gate
+her; `/api/health` then reports `allowList: 1 chat`. A value with no valid ID
+blocks everyone — a typo'd gate fails closed, on purpose.
 
 **The upstream model is occasionally flaky.** It sometimes emits its own
 system-prompt boilerplate. `lib/ai.ts` detects and retries up to 3 times; if all
@@ -186,8 +187,9 @@ attempts fail the user gets a polite retry message rather than nonsense.
 
 ## Security reminders
 
-1. **Never commit `.env.local`** or `BOT DETAILS.md` — both hold live secrets.
-   Both are gitignored, and the token file is ignored at any depth.
+1. **Never commit `.env.local`** — it holds the live secrets and is gitignored.
+   The former `BOT DETAILS.md` token file has been deleted from disk; its
+   `.gitignore` entry stays so a future copy can never be committed either.
 2. **`TELEGRAM_WEBHOOK_SECRET` protects your API credits.** It is the only thing
    preventing a stranger from POSTing to your endpoint and billing you.
 3. Secrets are never logged or returned by any endpoint. `/api/health` reports

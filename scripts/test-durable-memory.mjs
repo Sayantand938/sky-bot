@@ -145,6 +145,8 @@ function startApp() {
         TELEGRAM_BOT_TOKEN: 'test-token',
         TELEGRAM_WEBHOOK_SECRET: SECRET,
         TELEGRAM_API_ROOT: `http://127.0.0.1:${FAKE_TG_PORT}`,
+        // Tests chat as random IDs; never let a local ALLOWED_CHAT_IDS gate them.
+        ALLOWED_CHAT_IDS: '',
       },
     },
   );

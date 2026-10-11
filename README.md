@@ -68,6 +68,8 @@ Real observed output for *"how do I learn python from scratch?"*:
 - Telegram **secret-token** verification, so only Telegram can call your webhook.
 - Commands: `/start`, `/help`, `/reset`, `/whoami`.
 - Group-friendly: in groups it only answers when mentioned or replied to.
+- **Optional allow-list**: set `ALLOWED_CHAT_IDS` so only chosen chats can talk
+  to her — strangers get silence, and none of your credits.
 - **Resilient to a flaky upstream**: leaked provider boilerplate is detected and retried.
 - Friendly error notices instead of silent failures.
 - Zero runtime dependencies beyond Next.js + React (all API calls use `fetch`).
@@ -135,6 +137,7 @@ vercel --prod
 | `AI_API` | ✅ | Your AICredits key (`sk-live-...`). |
 | `TELEGRAM_WEBHOOK_SECRET` | ⚠️ strongly recommended | Random string; lets the route verify Telegram. |
 | `SETUP_KEY` | optional | Password-protects `/api/setup`. |
+| `ALLOWED_CHAT_IDS` | optional | Comma-separated chat IDs that may chat with her. Unset = everyone. |
 | `AI_BASE_URL` | optional | Defaults to `https://api.aicredits.in/v1`. |
 | `AI_MODEL` | optional | Defaults to `deepseek/deepseek-v4.1-flash`. |
 | `AI_SYSTEM_PROMPT` | optional | Changes the bot's personality. |
@@ -430,8 +433,10 @@ vercel env ls production | grep AI_SYSTEM_PROMPT
 - `/api/setup` is open when `SETUP_KEY` is unset. It only registers a webhook
   pointing at your own deployment, but setting a key is still wise.
 - Secrets live only in environment variables and are never logged or returned.
-- Anyone who finds your bot on Telegram can use your credits. There is no
-  allow-list in this project — add one in `handleMessage` if you need it.
+- Anyone who finds your bot on Telegram can use your credits. Set
+  `ALLOWED_CHAT_IDS` (your chat ID, from `/whoami`) to restrict her to chosen
+  chats; unset, she is open to everyone. A typo'd value blocks everyone rather
+  than quietly opening to strangers — on purpose.
 
 ---
 

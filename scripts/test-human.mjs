@@ -125,6 +125,22 @@ const out = {};
 }
 
 {
+  // Allow-list parsing. Set directly so the assertions are deterministic even
+  // if .env.local already carries a value.
+  process.env.ALLOWED_CHAT_IDS = '111, 222,,abc 333';
+  const allowed = config.allowedChatIds();
+  out.allowListSize = allowed ? allowed.size : -1;
+  out.allowListHas111 = allowed?.has(111) ?? false;
+  out.allowListHas333 = allowed?.has(333) ?? false;
+  process.env.ALLOWED_CHAT_IDS = '   ';
+  out.allowListOffWhenBlank = config.allowedChatIds() === undefined;
+  process.env.ALLOWED_CHAT_IDS = 'not-an-id';
+  out.allowListClosedOnGarbage = config.allowedChatIds()?.size === 0;
+  delete process.env.ALLOWED_CHAT_IDS;
+  out.allowListOffWhenUnset = config.allowedChatIds() === undefined;
+}
+
+{
   out.reactShort = persona.pickReaction('nice one', seq([0, 0]));
   out.reactQuestion = persona.pickReaction('are you around?', seq([0, 0]));
   out.reactLong = persona.pickReaction('a'.repeat(120), seq([0, 0]));
@@ -180,6 +196,13 @@ console.log('\nsplit hint (Tier B)');
 check('split hint chance is sane', out.splitHintChance >= 0 && out.splitHintChance <= 1, `got=${out.splitHintChance}`);
 check('hint asks for blank-line breaks', out.hintBrevity, `got=${JSON.stringify(out.hintLine)}`);
 check('hint caps the bubble count', out.hintCap);
+
+console.log('\nallow-list (Tier B)');
+check('parses comma- and space-separated ids', out.allowListSize === 3, `got=${out.allowListSize}`);
+check('ignores junk entries between ids', out.allowListHas111 && out.allowListHas333);
+check('blank value disables the list', out.allowListOffWhenBlank);
+check('unset value disables the list', out.allowListOffWhenUnset);
+check('garbage value fails closed (allows no one)', out.allowListClosedOnGarbage);
 
 console.log('\nreactions (Tier B)');
 check('a short statement can get a reaction', typeof out.reactShort === 'string');

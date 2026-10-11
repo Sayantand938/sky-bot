@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { maxHistory, redisConfigured } from '@/lib/config';
+import { allowedChatIds, maxHistory, redisConfigured } from '@/lib/config';
 import { memoryStats } from '@/lib/memory';
 
 /**
@@ -21,6 +21,7 @@ export async function GET(): Promise<NextResponse> {
     TELEGRAM_WEBHOOK_SECRET: present('TELEGRAM_WEBHOOK_SECRET'),
     AI_API: present('AI_API'),
     SETUP_KEY: present('SETUP_KEY'),
+    ALLOWED_CHAT_IDS: present('ALLOWED_CHAT_IDS'),
     // Not required: without it the bot runs on in-memory history, which is
     // fine locally but forgets everything on a cold start in production.
     UPSTASH_REDIS_REST_URL: present('UPSTASH_REDIS_REST_URL'),
@@ -35,6 +36,9 @@ export async function GET(): Promise<NextResponse> {
   // drift out of step with what the bot actually does.
   const durable = redisConfigured();
 
+  // Count only — the IDs themselves stay private.
+  const allow = allowedChatIds();
+
   return NextResponse.json(
     {
       ok: ready,
@@ -45,6 +49,9 @@ export async function GET(): Promise<NextResponse> {
         baseUrl: process.env.AI_BASE_URL?.trim() || 'https://api.aicredits.in/v1',
         maxHistory: maxHistory(),
         memoryBackend: durable ? 'redis' : 'memory',
+        allowList: allow
+          ? `${allow.size} chat${allow.size === 1 ? '' : 's'}`
+          : 'off',
       },
       memory: await memoryStats(),
       hint: ready

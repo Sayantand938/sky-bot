@@ -273,3 +273,38 @@ export function setupKey(): string | undefined {
   const value = process.env.SETUP_KEY?.trim();
   return value && value.length > 0 ? value : undefined;
 }
+
+/**
+ * Chats allowed to talk to her, when the allow-list is enabled.
+ *
+ * ALLOWED_CHAT_IDS is a comma- or whitespace-separated list of numeric chat
+ * IDs — the value the /whoami command prints. Examples:
+ *
+ *   ALLOWED_CHAT_IDS=123456789
+ *   ALLOWED_CHAT_IDS=123456789, 987654321
+ *
+ * Unset or empty -> the list is off and anyone can chat (the previous
+ * behaviour, and what local development and the test scripts expect).
+ *
+ * Set but containing no valid ID -> the bot answers NOBODY. A typo'd gate
+ * must fail closed: a locked-out owner notices within one message, whereas a
+ * quietly-open one hands your credits to strangers.
+ */
+export function allowedChatIds(): Set<number> | undefined {
+  const raw = process.env.ALLOWED_CHAT_IDS?.trim();
+  if (!raw) return undefined;
+
+  const ids = new Set<number>();
+  for (const part of raw.split(/[,\s]+/)) {
+    const parsed = Number(part);
+    if (part !== '' && Number.isInteger(parsed) && parsed !== 0) ids.add(parsed);
+  }
+
+  if (ids.size === 0) {
+    console.warn(
+      `[config] ALLOWED_CHAT_IDS="${raw}" contains no valid chat ID; ` +
+        'the bot will answer nobody until this is fixed.',
+    );
+  }
+  return ids;
+}

@@ -129,6 +129,8 @@ try {
       TELEGRAM_BOT_TOKEN: `test-token`,
       TELEGRAM_WEBHOOK_SECRET: SECRET,
       TELEGRAM_API_ROOT: `http://127.0.0.1:${FAKE_TG_PORT}`,
+      // Tests chat as random IDs; never let a local ALLOWED_CHAT_IDS gate them.
+      ALLOWED_CHAT_IDS: '',
       AI_API: process.env.AI_API ?? '',
       AI_BASE_URL: process.env.AI_BASE_URL ?? 'https://api.aicredits.in/v1',
       AI_MODEL: process.env.AI_MODEL ?? 'deepseek/deepseek-v4.1-flash',

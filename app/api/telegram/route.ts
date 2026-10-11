@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { AiError, generateReply } from '@/lib/ai';
 import {
+  allowedChatIds,
   botName,
   debounceMs,
   webhookSecret,
@@ -182,6 +183,13 @@ async function handleCommand(
 
 async function handleMessage(message: TelegramMessage): Promise<void> {
   const chatId = message.chat.id;
+
+  // Allow-list: when ALLOWED_CHAT_IDS is set, only those chats are answered.
+  // Silence, not a rejection notice: a stranger probing the bot gets nothing
+  // back, and none of the credits are spent — not even on the error paths.
+  const allowed = allowedChatIds();
+  if (allowed && !allowed.has(chatId)) return;
+
   const text = (message.text ?? message.caption ?? '').trim();
 
   if (text === '') {
